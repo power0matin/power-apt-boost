@@ -11,14 +11,21 @@
 set -Eeuo pipefail
 
 APP_NAME="Power APT Boost"
-VERSION="1.1.0"
+VERSION="1.2.0"
 AUTHOR="Matin Shahabadi"
 GITHUB="https://github.com/power0matin"
 
 CODENAME=""
 SELECTED_MIRROR=""
 SELECTED_TIME=""
+
+LAST_HTTP_CODE=""
+LAST_TIME_TOTAL=""
+TEST_MIRROR=""
+TEST_TIME=""
+
 SPINNER_PID=""
+CHILD_PID=""
 
 DRY_RUN="false"
 SKIP_UPDATE="false"
@@ -84,6 +91,7 @@ What this script does:
   - Sets APT retry and timeout options
   - Cleans old APT package lists
   - Runs apt-get update unless --skip-update is used
+  - Supports safe Ctrl+C interruption
 
 Author:
   $AUTHOR
@@ -106,6 +114,31 @@ log() {
 
 supports_spinner() {
   [ "$NO_SPINNER" = "false" ] && [ -t 2 ]
+}
+
+cleanup_processes() {
+  if [ -n "${SPINNER_PID:-}" ]; then
+    kill "$SPINNER_PID" 2>/dev/null || true
+    wait "$SPINNER_PID" 2>/dev/null || true
+    SPINNER_PID=""
+  fi
+
+  if [ -n "${CHILD_PID:-}" ]; then
+    kill "$CHILD_PID" 2>/dev/null || true
+    wait "$CHILD_PID" 2>/dev/null || true
+    CHILD_PID=""
+  fi
+
+  if [ -t 2 ]; then
+    printf "\r\033[K" >&2 || true
+  fi
+}
+
+handle_interrupt() {
+  log ""
+  log "Interrupted by user. Cleaning up..."
+  cleanup_processes
+  exit 130
 }
 
 start_spinner() {
@@ -148,17 +181,8 @@ stop_spinner() {
   fi
 }
 
-cleanup_spinner() {
-  if [ -n "${SPINNER_PID:-}" ]; then
-    kill "$SPINNER_PID" 2>/dev/null || true
-    wait "$SPINNER_PID" 2>/dev/null || true
-    SPINNER_PID=""
-    printf "\r\033[K" >&2 || true
-  fi
-}
-
-trap cleanup_spinner EXIT
-trap 'cleanup_spinner; exit 130' INT TERM
+trap cleanup_processes EXIT
+trap handle_interrupt INT TERM
 
 need_root() {
   if [ "$(id -u)" -ne 0 ]; then
@@ -172,7 +196,26 @@ require_basic_commands() {
   command -v mkdir >/dev/null 2>&1 || die "mkdir is required."
   command -v cp >/dev/null 2>&1 || die "cp is required."
   command -v rm >/dev/null 2>&1 || die "rm is required."
+  command -v id >/dev/null 2>&1 || die "id is required."
+  command -v cat >/dev/null 2>&1 || die "cat is required."
+  command -v mktemp >/dev/null 2>&1 || die "mktemp is required."
   command -v apt-get >/dev/null 2>&1 || die "apt-get is required."
+}
+
+require_probe_tool() {
+  if command -v curl >/dev/null 2>&1; then
+    return
+  fi
+
+  if command -v wget >/dev/null 2>&1; then
+    return
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    return
+  fi
+
+  die "curl, wget, or python3 is required to test mirrors."
 }
 
 parse_args() {
@@ -268,7 +311,7 @@ url = sys.argv[1]
 start = time.time()
 
 try:
-    req = urllib.request.Request(url, headers={"User-Agent": "PowerAPTBoost/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "PowerAPTBoost/1.2.0"})
     with urllib.request.urlopen(req, timeout=20) as response:
         code = response.getcode()
     print(f"{code} {time.time() - start:.6f}")
@@ -284,23 +327,59 @@ PY
 probe_url_with_spinner() {
   local label="$1"
   local url="$2"
+  local tmp_file
   local result
   local code
   local time_taken
+  local child_status=0
+
+  LAST_HTTP_CODE="000"
+  LAST_TIME_TOTAL="999999"
+
+  tmp_file="$(mktemp -t power-apt-boost.XXXXXX)"
 
   start_spinner "$label"
-  result="$(probe_url "$url")"
+
+  (
+    probe_url "$url" > "$tmp_file"
+  ) &
+
+  CHILD_PID="$!"
+
+  if wait "$CHILD_PID"; then
+    child_status=0
+  else
+    child_status="$?"
+  fi
+
+  CHILD_PID=""
+
+  result="$(cat "$tmp_file" 2>/dev/null || true)"
+  rm -f "$tmp_file"
+
+  if [ "$child_status" -ne 0 ] || [ -z "${result:-}" ]; then
+    result="000 999999"
+  fi
 
   code="$(echo "$result" | awk '{print $1}')"
   time_taken="$(echo "$result" | awk '{print $2}')"
+
+  if [ -z "${code:-}" ]; then
+    code="000"
+  fi
+
+  if [ -z "${time_taken:-}" ]; then
+    time_taken="999999"
+  fi
+
+  LAST_HTTP_CODE="$code"
+  LAST_TIME_TOTAL="$time_taken"
 
   if [ "$code" = "200" ]; then
     stop_spinner "OK" "$label - HTTP $code in ${time_taken}s"
   else
     stop_spinner "FAIL" "$label - HTTP $code in ${time_taken}s"
   fi
-
-  echo "$result"
 }
 
 test_single_mirror() {
@@ -308,10 +387,6 @@ test_single_mirror() {
   local main_url
   local updates_url
   local security_url
-
-  local main_result
-  local updates_result
-  local security_result
 
   local main_code
   local main_time
@@ -321,6 +396,9 @@ test_single_mirror() {
   local security_time
   local total_time
 
+  TEST_MIRROR=""
+  TEST_TIME=""
+
   base="${base%/}"
 
   main_url="$base/dists/$CODENAME/InRelease"
@@ -329,18 +407,17 @@ test_single_mirror() {
 
   log "==> $base"
 
-  main_result="$(probe_url_with_spinner "Testing main repository" "$main_url")"
-  updates_result="$(probe_url_with_spinner "Testing updates repository" "$updates_url")"
-  security_result="$(probe_url_with_spinner "Testing security repository" "$security_url")"
+  probe_url_with_spinner "Testing main repository" "$main_url"
+  main_code="$LAST_HTTP_CODE"
+  main_time="$LAST_TIME_TOTAL"
 
-  main_code="$(echo "$main_result" | awk '{print $1}')"
-  main_time="$(echo "$main_result" | awk '{print $2}')"
+  probe_url_with_spinner "Testing updates repository" "$updates_url"
+  updates_code="$LAST_HTTP_CODE"
+  updates_time="$LAST_TIME_TOTAL"
 
-  updates_code="$(echo "$updates_result" | awk '{print $1}')"
-  updates_time="$(echo "$updates_result" | awk '{print $2}')"
-
-  security_code="$(echo "$security_result" | awk '{print $1}')"
-  security_time="$(echo "$security_result" | awk '{print $2}')"
+  probe_url_with_spinner "Testing security repository" "$security_url"
+  security_code="$LAST_HTTP_CODE"
+  security_time="$LAST_TIME_TOTAL"
 
   log "main:     HTTP $main_code time ${main_time}s"
   log "updates:  HTTP $updates_code time ${updates_time}s"
@@ -348,9 +425,12 @@ test_single_mirror() {
 
   if [ "$main_code" = "200" ] && [ "$updates_code" = "200" ] && [ "$security_code" = "200" ]; then
     total_time="$(awk "BEGIN {print $main_time + $updates_time + $security_time}")"
+
+    TEST_MIRROR="$base"
+    TEST_TIME="$total_time"
+
     log "OK total ${total_time}s"
     log ""
-    echo "$base $total_time"
     return 0
   fi
 
@@ -360,32 +440,20 @@ test_single_mirror() {
 }
 
 select_forced_mirror() {
-  local result
-  local mirror
-  local total_time
-
   log "Testing forced mirror..."
   log ""
 
-  result="$(test_single_mirror "$FORCE_MIRROR" || true)"
-
-  mirror="$(echo "$result" | awk '{print $1}')"
-  total_time="$(echo "$result" | awk '{print $2}')"
-
-  if [ "$mirror" != "$FORCE_MIRROR" ] || [ -z "${total_time:-}" ]; then
+  if ! test_single_mirror "$FORCE_MIRROR"; then
     die "Forced mirror is not valid or not reachable: $FORCE_MIRROR"
   fi
 
-  SELECTED_MIRROR="$mirror"
-  SELECTED_TIME="$total_time"
+  SELECTED_MIRROR="$TEST_MIRROR"
+  SELECTED_TIME="$TEST_TIME"
 }
 
 select_fastest_mirror() {
   local best=""
   local best_time="999999"
-  local result
-  local mirror
-  local total_time
 
   echo "Detected Ubuntu codename: $CODENAME"
   echo
@@ -393,15 +461,10 @@ select_fastest_mirror() {
   echo
 
   for base in "${CANDIDATES[@]}"; do
-    result="$(test_single_mirror "$base" || true)"
-
-    mirror="$(echo "$result" | awk '{print $1}')"
-    total_time="$(echo "$result" | awk '{print $2}')"
-
-    if [ -n "${mirror:-}" ] && [ -n "${total_time:-}" ]; then
-      if awk "BEGIN {exit !($total_time < $best_time)}"; then
-        best="$mirror"
-        best_time="$total_time"
+    if test_single_mirror "$base"; then
+      if awk "BEGIN {exit !($TEST_TIME < $best_time)}"; then
+        best="$TEST_MIRROR"
+        best_time="$TEST_TIME"
       fi
     fi
   done
@@ -462,6 +525,24 @@ clean_apt_cache() {
   apt-get clean
 }
 
+run_apt_update() {
+  local child_status=0
+
+  apt-get update &
+
+  CHILD_PID="$!"
+
+  if wait "$CHILD_PID"; then
+    child_status=0
+  else
+    child_status="$?"
+  fi
+
+  CHILD_PID=""
+
+  return "$child_status"
+}
+
 apply_changes() {
   echo
   echo "Selected mirror: $SELECTED_MIRROR"
@@ -499,7 +580,7 @@ EOF
   echo "Running apt-get update..."
   echo
 
-  if ! apt-get update; then
+  if ! run_apt_update; then
     die "apt-get update failed after applying mirror configuration."
   fi
 }
@@ -548,6 +629,7 @@ main() {
   print_banner
   need_root
   require_basic_commands
+  require_probe_tool
   detect_ubuntu
 
   if [ -n "$FORCE_MIRROR" ]; then
