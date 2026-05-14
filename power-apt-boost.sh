@@ -11,18 +11,20 @@
 set -Eeuo pipefail
 
 APP_NAME="Power APT Boost"
-VERSION="1.0.0"
+VERSION="1.1.0"
 AUTHOR="Matin Shahabadi"
 GITHUB="https://github.com/power0matin"
 
 CODENAME=""
 SELECTED_MIRROR=""
 SELECTED_TIME=""
+SPINNER_PID=""
 
 DRY_RUN="false"
 SKIP_UPDATE="false"
 KEEP_RECOMMENDS="false"
 FORCE_MIRROR=""
+NO_SPINNER="false"
 
 CANDIDATES=(
   "https://repo.abrha.net/ubuntu"
@@ -61,6 +63,7 @@ Options:
       --dry-run              Test mirrors and show result without changing APT config
       --skip-update          Write config but do not run apt-get update
       --keep-recommends      Keep APT recommended packages enabled
+      --no-spinner           Disable loading spinner output
 
 Examples:
   sudo bash power-apt-boost.sh
@@ -96,6 +99,66 @@ die() {
 info() {
   echo "INFO: $*"
 }
+
+log() {
+  echo "$*" >&2
+}
+
+supports_spinner() {
+  [ "$NO_SPINNER" = "false" ] && [ -t 2 ]
+}
+
+start_spinner() {
+  local message="$1"
+
+  if ! supports_spinner; then
+    log "... $message"
+    SPINNER_PID=""
+    return
+  fi
+
+  (
+    local frames=("|" "/" "-" "\\")
+    local i=0
+
+    while true; do
+      printf "\r[%s] %s" "${frames[$i]}" "$message" >&2
+      i=$(( (i + 1) % 4 ))
+      sleep 0.12
+    done
+  ) &
+
+  SPINNER_PID="$!"
+}
+
+stop_spinner() {
+  local status="$1"
+  local message="$2"
+
+  if [ -n "${SPINNER_PID:-}" ]; then
+    kill "$SPINNER_PID" 2>/dev/null || true
+    wait "$SPINNER_PID" 2>/dev/null || true
+    SPINNER_PID=""
+  fi
+
+  if supports_spinner; then
+    printf "\r\033[K[%s] %s\n" "$status" "$message" >&2
+  else
+    log "[$status] $message"
+  fi
+}
+
+cleanup_spinner() {
+  if [ -n "${SPINNER_PID:-}" ]; then
+    kill "$SPINNER_PID" 2>/dev/null || true
+    wait "$SPINNER_PID" 2>/dev/null || true
+    SPINNER_PID=""
+    printf "\r\033[K" >&2 || true
+  fi
+}
+
+trap cleanup_spinner EXIT
+trap 'cleanup_spinner; exit 130' INT TERM
 
 need_root() {
   if [ "$(id -u)" -ne 0 ]; then
@@ -138,6 +201,10 @@ parse_args() {
         ;;
       --keep-recommends)
         KEEP_RECOMMENDS="true"
+        shift
+        ;;
+      --no-spinner)
+        NO_SPINNER="true"
         shift
         ;;
       *)
@@ -214,6 +281,28 @@ PY
   echo "000 999999"
 }
 
+probe_url_with_spinner() {
+  local label="$1"
+  local url="$2"
+  local result
+  local code
+  local time_taken
+
+  start_spinner "$label"
+  result="$(probe_url "$url")"
+
+  code="$(echo "$result" | awk '{print $1}')"
+  time_taken="$(echo "$result" | awk '{print $2}')"
+
+  if [ "$code" = "200" ]; then
+    stop_spinner "OK" "$label - HTTP $code in ${time_taken}s"
+  else
+    stop_spinner "FAIL" "$label - HTTP $code in ${time_taken}s"
+  fi
+
+  echo "$result"
+}
+
 test_single_mirror() {
   local base="$1"
   local main_url
@@ -238,11 +327,11 @@ test_single_mirror() {
   updates_url="$base/dists/$CODENAME-updates/InRelease"
   security_url="$base/dists/$CODENAME-security/InRelease"
 
-  echo "==> $base"
+  log "==> $base"
 
-  main_result="$(probe_url "$main_url")"
-  updates_result="$(probe_url "$updates_url")"
-  security_result="$(probe_url "$security_url")"
+  main_result="$(probe_url_with_spinner "Testing main repository" "$main_url")"
+  updates_result="$(probe_url_with_spinner "Testing updates repository" "$updates_url")"
+  security_result="$(probe_url_with_spinner "Testing security repository" "$security_url")"
 
   main_code="$(echo "$main_result" | awk '{print $1}')"
   main_time="$(echo "$main_result" | awk '{print $2}')"
@@ -253,20 +342,20 @@ test_single_mirror() {
   security_code="$(echo "$security_result" | awk '{print $1}')"
   security_time="$(echo "$security_result" | awk '{print $2}')"
 
-  echo "main:     HTTP $main_code time ${main_time}s"
-  echo "updates:  HTTP $updates_code time ${updates_time}s"
-  echo "security: HTTP $security_code time ${security_time}s"
+  log "main:     HTTP $main_code time ${main_time}s"
+  log "updates:  HTTP $updates_code time ${updates_time}s"
+  log "security: HTTP $security_code time ${security_time}s"
 
   if [ "$main_code" = "200" ] && [ "$updates_code" = "200" ] && [ "$security_code" = "200" ]; then
     total_time="$(awk "BEGIN {print $main_time + $updates_time + $security_time}")"
-    echo "OK total ${total_time}s"
-    echo
+    log "OK total ${total_time}s"
+    log ""
     echo "$base $total_time"
     return 0
   fi
 
-  echo "FAILED"
-  echo
+  log "FAILED"
+  log ""
   return 1
 }
 
@@ -275,10 +364,10 @@ select_forced_mirror() {
   local mirror
   local total_time
 
-  echo "Testing forced mirror..."
-  echo
+  log "Testing forced mirror..."
+  log ""
 
-  result="$(test_single_mirror "$FORCE_MIRROR" | tail -n 1 || true)"
+  result="$(test_single_mirror "$FORCE_MIRROR" || true)"
 
   mirror="$(echo "$result" | awk '{print $1}')"
   total_time="$(echo "$result" | awk '{print $2}')"
@@ -304,7 +393,7 @@ select_fastest_mirror() {
   echo
 
   for base in "${CANDIDATES[@]}"; do
-    result="$(test_single_mirror "$base" | tail -n 1 || true)"
+    result="$(test_single_mirror "$base" || true)"
 
     mirror="$(echo "$result" | awk '{print $1}')"
     total_time="$(echo "$result" | awk '{print $2}')"
