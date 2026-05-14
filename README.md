@@ -4,7 +4,7 @@ Fast Ubuntu APT mirror selector and network optimizer.
 
 **Power APT Boost** tests multiple Ubuntu mirrors, selects the fastest working mirror for your server, rewrites APT sources safely, applies basic APT network optimizations, cleans old package indexes, and runs `apt-get update`.
 
-Built by **Matin**.
+Built by **Matin Shahabadi**.
 
 GitHub: [power0matin](https://github.com/power0matin)
 
@@ -97,9 +97,8 @@ It removes the old legacy file if present:
 Power APT Boost
 Fast Ubuntu APT Mirror Selector
 
-Author : Matin
+Author : Matin Shahabadi
 GitHub : https://github.com/power0matin
-Brand  : PowerMatin
 
 Selected mirror: http://mirror.arvancloud.ir/ubuntu
 APT mirror optimized successfully.
@@ -125,43 +124,10 @@ sudo apt-get update
 
 ## Author
 
-**Matin**
+**Matin Shahabadi**
 
 GitHub: [@power0matin](https://github.com/power0matin)
 
 ## License
 
 MIT
-
-git init
-git add .
-git commit -m "Initial release of Power APT Boost"
-git branch -M main
-
-بعد این را بزن:
-
-```bash
-cd ~/power-apt-boost
-
-git remote add origin https://github.com/power0matin/power-apt-boost.git
-git push -u origin main
-```
-
-اگر `git` روی سرورت نصب نبود:
-
-```bash
-apt-get update
-apt-get install -y git
-```
-
-بعد از push، دستور نصب نهایی برندت این می‌شود:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/power0matin/power-apt-boost/main/power-apt-boost.sh | sudo bash
-```
-
-برای تست قبل از انتشار هم این را بزن:
-
-```bash
-bash -n ~/power-apt-boost/power-apt-boost.sh && echo "Script syntax is OK"
-```
