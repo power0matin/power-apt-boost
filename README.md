@@ -25,6 +25,49 @@ GitHub: [power0matin](https://github.com/power0matin)
 - Supports custom mirror selection
 - Supports CI-friendly no-spinner mode
 
+## Supported Mirrors
+
+Power APT Boost currently tests and supports the following Ubuntu mirrors:
+
+| Mirror                                | Protocol | Status    |
+| ------------------------------------- | -------- | --------- |
+| `https://repo.abrha.net/ubuntu`       | HTTPS    | Supported |
+| `http://repo.abrha.net/ubuntu`        | HTTP     | Supported |
+| `https://mirror.arvancloud.ir/ubuntu` | HTTPS    | Supported |
+| `http://mirror.arvancloud.ir/ubuntu`  | HTTP     | Supported |
+| `http://ir.archive.ubuntu.com/ubuntu` | HTTP     | Supported |
+| `http://archive.ubuntu.com/ubuntu`    | HTTP     | Supported |
+
+Power APT Boost checks each mirror by testing these Ubuntu repository endpoints:
+
+```text
+/dists/<codename>/InRelease
+/dists/<codename>-updates/InRelease
+/dists/<codename>-security/InRelease
+```
+
+For example, on Ubuntu 24.04 LTS Noble, it tests:
+
+```text
+/dists/noble/InRelease
+/dists/noble-updates/InRelease
+/dists/noble-security/InRelease
+```
+
+The fastest mirror that returns successful HTTP `200` responses for all required endpoints will be selected automatically.
+
+You can also force a specific mirror manually:
+
+```bash
+sudo bash power-apt-boost.sh --mirror http://mirror.arvancloud.ir/ubuntu
+```
+
+To test mirrors without changing your APT configuration:
+
+```bash
+sudo bash power-apt-boost.sh --dry-run
+```
+
 ## Supported OS
 
 Ubuntu only.
