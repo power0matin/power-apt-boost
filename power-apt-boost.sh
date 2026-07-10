@@ -99,7 +99,7 @@ _setup_colors() {
 
 _log_to_file() {
   if [[ "$LOG_ENABLED" == true ]] && [[ -n "$LOG_FILE" ]]; then
-    printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >> "$LOG_FILE" 2>/dev/null || true
+    printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >>"$LOG_FILE" 2>/dev/null || true
   fi
 }
 
@@ -485,7 +485,7 @@ _probe_url_timed() {
     elapsed=$(awk "BEGIN {printf \"%.6f\", ($end - $start) / 1000000000}")
   else
     # second precision fallback
-    elapsed="$(( end - start )).000000"
+    elapsed="$((end - start)).000000"
   fi
 
   echo "$http_code $elapsed $reason"
@@ -514,7 +514,7 @@ _start_spinner() {
     local i=0
     while true; do
       printf "\r\033[K  [%s] %s" "${frames[$i]}" "$message" >&2
-      i=$(( (i + 1) % 4 ))
+      i=$(((i + 1) % 4))
       sleep 0.12
     done
   ) &
@@ -664,10 +664,10 @@ _select_mirror() {
     else
       failed=$((failed + 1))
     fi
-  done <<< "$mirror_list"
+  done <<<"$mirror_list"
 
   bench_end=$(date +%s)
-  bench_duration=$(( bench_end - bench_start ))
+  bench_duration=$((bench_end - bench_start))
 
   echo ""
   msg_color "$COLOR_BOLD" "─── Benchmark Summary ───"
@@ -755,7 +755,7 @@ _write_apt_sources() {
   fi
 
   # Write deb822 format
-  cat > "$APT_DEB822_FILE" <<SOURCES
+  cat >"$APT_DEB822_FILE" <<SOURCES
 # Power APT Boost — Ubuntu mirror configuration
 # Generated: $(date -u '+%Y-%m-%dT%H:%M:%SZ')
 # Mirror: ${mirror_url}
@@ -780,7 +780,7 @@ SOURCES
 }
 
 _write_apt_config() {
-  cat > "$APT_CONF_FILE" <<APTCONF
+  cat >"$APT_CONF_FILE" <<APTCONF
 # Power APT Boost — APT network optimization
 # Generated: $(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
@@ -1092,22 +1092,22 @@ _parse_args() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      -h|--help)
+      -h | --help)
         _print_help
         exit "$EXIT_OK"
         ;;
-      -v|--version)
+      -v | --version)
         echo "$APP_NAME v$APP_VERSION"
         exit "$EXIT_OK"
         ;;
-      -m|--mirror)
+      -m | --mirror)
         if [[ ! "${2:-}" ]]; then
           die "Option $1 requires a URL argument" "$EXIT_USAGE"
         fi
         FORCE_MIRROR="${2%/}"
         shift 2
         ;;
-      -r|--restore)
+      -r | --restore)
         RESTORE=true
         shift
         ;;
@@ -1198,7 +1198,7 @@ main() {
   # Initialize log file if requested
   if [[ "$LOG_ENABLED" == true ]]; then
     mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-    : > "$LOG_FILE"
+    : >"$LOG_FILE"
     _log_to_file "Session started: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   fi
 
