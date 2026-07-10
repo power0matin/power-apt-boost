@@ -69,7 +69,6 @@ LOG_FILE=""
 LOG_ENABLED=false
 
 _spinner_pid=""
-_child_pid=""
 _tmp_files=()
 
 # ─── Color ────────────────────────────────────────────────────────────────────
@@ -166,12 +165,6 @@ _cleanup_processes() {
     kill "$_spinner_pid" 2>/dev/null || true
     wait "$_spinner_pid" 2>/dev/null || true
     _spinner_pid=""
-  fi
-
-  if [[ -n "${_child_pid:-}" ]]; then
-    kill "$_child_pid" 2>/dev/null || true
-    wait "$_child_pid" 2>/dev/null || true
-    _child_pid=""
   fi
 }
 
@@ -339,7 +332,7 @@ _get_mirrors() {
     country_lower="$(echo "$COUNTRY_FILTER" | tr '[:upper:]' '[:lower:]')"
     local mirror_url
     for mirror_url in "${_DEFAULT_MIRRORS[@]}"; do
-      if [[ "$mirror_url" == *"//${country_lower}."* ]] || [[ "$mirror_url" == *"//${country_lower}."* ]]; then
+      if [[ "$mirror_url" == *"//${country_lower}."* ]]; then
         mirrors+=("$mirror_url")
       fi
     done
@@ -391,6 +384,7 @@ _probe_url_code() {
   local url="$1"
   local ip_flag="-4"
   local reason=""
+  local http_code
 
   if [[ "$USE_IPV6" == true ]]; then
     ip_flag="-6"
@@ -401,7 +395,6 @@ _probe_url_code() {
     curl_stderr=$(mktemp "${TMPDIR:-/tmp}/${APP_SLUG}.curlerr.XXXXXX")
     _tmp_files+=("$curl_stderr")
 
-    local http_code
     http_code=$(curl "$ip_flag" -L -sS --connect-timeout "$PROBE_TIMEOUT_CONNECT" \
       --max-time "$TIMEOUT_TOTAL" -o /dev/null \
       -w '%{http_code}' "$url" 2>"$curl_stderr") || true
@@ -420,7 +413,6 @@ _probe_url_code() {
     wget_output=$(wget "$ip_flag" --server-response --spider \
       --timeout="$TIMEOUT_TOTAL" --tries=1 -q "$url" 2>&1) || true
 
-    local http_code
     http_code=$(echo "$wget_output" | awk '/HTTP\// {print $2}')
     http_code="${http_code:-000}"
 
@@ -566,7 +558,7 @@ _test_mirror() {
   local main_code main_time main_reason
   local updates_code updates_time updates_reason
   local security_code security_time security_reason
-  local result total_time
+  local result total_time fail_msg
 
   base_url="${base_url%/}"
 
@@ -587,7 +579,7 @@ _test_mirror() {
   if [[ "$main_code" == "200" ]]; then
     _stop_spinner "OK" "main: HTTP $main_code in ${main_time}s" "$COLOR_GREEN"
   else
-    local fail_msg="main: HTTP $main_code in ${main_time}s"
+    fail_msg="main: HTTP $main_code in ${main_time}s"
     [[ -n "$main_reason" ]] && fail_msg="${fail_msg} — ${main_reason}"
     _stop_spinner "FAIL" "$fail_msg" "$COLOR_RED"
   fi
@@ -603,7 +595,7 @@ _test_mirror() {
   if [[ "$updates_code" == "200" ]]; then
     _stop_spinner "OK" "updates: HTTP $updates_code in ${updates_time}s" "$COLOR_GREEN"
   else
-    local fail_msg="updates: HTTP $updates_code in ${updates_time}s"
+    fail_msg="updates: HTTP $updates_code in ${updates_time}s"
     [[ -n "$updates_reason" ]] && fail_msg="${fail_msg} — ${updates_reason}"
     _stop_spinner "FAIL" "$fail_msg" "$COLOR_RED"
   fi
@@ -619,7 +611,7 @@ _test_mirror() {
   if [[ "$security_code" == "200" ]]; then
     _stop_spinner "OK" "security: HTTP $security_code in ${security_time}s" "$COLOR_GREEN"
   else
-    local fail_msg="security: HTTP $security_code in ${security_time}s"
+    fail_msg="security: HTTP $security_code in ${security_time}s"
     [[ -n "$security_reason" ]] && fail_msg="${fail_msg} — ${security_reason}"
     _stop_spinner "FAIL" "$fail_msg" "$COLOR_RED"
   fi
