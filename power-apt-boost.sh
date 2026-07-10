@@ -32,23 +32,13 @@ readonly APT_DEB822_FILE="${APT_SOURCES_DIR}/ubuntu.sources"
 readonly APT_CONF_FILE="${APT_CONF_DIR}/99-${APP_SLUG}"
 readonly BACKUP_BASE="/var/backups/${APP_SLUG}"
 readonly KEYRING_PATH="/usr/share/keyrings/ubuntu-archive-keyring.gpg"
-readonly LOG_DIR="/var/log/${APP_SLUG}"
 
 readonly PROBE_TIMEOUT_CONNECT=8
-readonly PROBE_TIMEOUT_TOTAL=20
-readonly PROBE_PATHS=("InRelease")
-readonly PROBE_COMPONENTS=("main" "updates" "security")
 
 # Exit codes
 readonly EXIT_OK=0
 readonly EXIT_GENERAL=1
 readonly EXIT_USAGE=2
-readonly EXIT_NETWORK=3
-readonly EXIT_NOT_ROOT=4
-readonly EXIT_NOT_UBUNTU=5
-readonly EXIT_NO_MIRROR=6
-readonly EXIT_BACKUP_FAILED=7
-readonly EXIT_RESTORE_FAILED=8
 
 # ─── Global State ─────────────────────────────────────────────────────────────
 
@@ -66,7 +56,6 @@ RESTORE=false
 RESTORE_PATH=""
 TIMEOUT_TOTAL=20
 COUNTRY_FILTER=""
-CONCURRENCY=1
 USE_IPV6=false
 LOG_FILE=""
 LOG_ENABLED=false
@@ -108,20 +97,26 @@ _log_to_file() {
 }
 
 msg() {
-  [[ "$QUIET" == true ]] && return
+  if [[ "$QUIET" == true ]]; then
+    return
+  fi
   printf '%b\n' "$*" >&2
   _log_to_file "$*"
 }
 
 msg_color() {
-  [[ "$QUIET" == true ]] && return
+  if [[ "$QUIET" == true ]]; then
+    return
+  fi
   local color="$1" text="$2"
   printf '%b%b%b\n' "$color" "$text" "$COLOR_RESET" >&2
   _log_to_file "$text"
 }
 
 msg_verbose() {
-  [[ "$VERBOSE" == true ]] && msg "$@"
+  if [[ "$VERBOSE" == true ]]; then
+    msg "$@"
+  fi
 }
 
 info() {
@@ -139,17 +134,22 @@ error() {
 }
 
 die() {
-  error "$*"
-  exit "$EXIT_GENERAL"
+  local exit_code="${2:-$EXIT_GENERAL}"
+  error "$1"
+  exit "$exit_code"
 }
 
 # ─── Cleanup & Signals ────────────────────────────────────────────────────────
 
 _cleanup_tmp() {
   local f
-  for f in "${_tmp_files[@]:-}"; do
-    [[ -f "$f" ]] && rm -f "$f" 2>/dev/null || true
-  done
+  if [[ ${#_tmp_files[@]} -gt 0 ]]; then
+    for f in "${_tmp_files[@]}"; do
+      if [[ -f "$f" ]]; then
+        rm -f "$f" 2>/dev/null || true
+      fi
+    done
+  fi
   _tmp_files=()
 }
 
@@ -168,7 +168,8 @@ _cleanup_processes() {
 }
 
 _cleanup() {
-  local exit_code=$?
+  local exit_code
+  exit_code=$?
   _cleanup_processes
   _cleanup_tmp
 
@@ -376,10 +377,13 @@ list_mirrors() {
 
 _probe_url_code() {
   local url="$1"
+  local ip_flag="-4"
+
+  if [[ "$USE_IPV6" == true ]]; then
+    ip_flag="-6"
+  fi
 
   if command -v curl >/dev/null 2>&1; then
-    local ip_flag="-4"
-    [[ "$USE_IPV6" == true ]] && ip_flag="-6"
     curl "$ip_flag" -L -sS --connect-timeout "$PROBE_TIMEOUT_CONNECT" \
       --max-time "$TIMEOUT_TOTAL" -o /dev/null \
       -w '%{http_code}' "$url" 2>/dev/null || echo "000"
@@ -387,8 +391,6 @@ _probe_url_code() {
   fi
 
   if command -v wget >/dev/null 2>&1; then
-    local ip_flag="-4"
-    [[ "$USE_IPV6" == true ]] && ip_flag="-6"
     local http_code
     http_code=$(wget "$ip_flag" --server-response --spider \
       --timeout="$TIMEOUT_TOTAL" --tries=1 -q "$url" 2>&1 \
@@ -405,9 +407,7 @@ _probe_url_timed() {
   local start end elapsed code
 
   start=$(date +%s%N 2>/dev/null || date +%s)
-
   code=$(_probe_url_code "$url")
-
   end=$(date +%s%N 2>/dev/null || date +%s)
 
   # Calculate elapsed time
@@ -437,7 +437,11 @@ _start_spinner() {
   fi
 
   (
-    local frames=('|' '/' '-' '\\')
+    local -a frames
+    frames[0]='|'
+    frames[1]='/'
+    frames[2]='-'
+    frames[3]=$'\x5c'
     local i=0
     while true; do
       printf "\r\033[K  [%s] %s" "${frames[$i]}" "$message" >&2
@@ -548,16 +552,19 @@ _select_mirror() {
   echo ""
 
   while IFS= read -r mirror_url; do
-    [[ -z "$mirror_url" ]] && continue
+    if [[ -z "$mirror_url" ]]; then
+      continue
+    fi
     tested=$((tested + 1))
 
-    if total_time=$(_test_mirror "$mirror_url"); then
+    local mirror_time
+    if mirror_time=$(_test_mirror "$mirror_url"); then
       passed=$((passed + 1))
 
       # Compare times using awk for float comparison
-      if awk "BEGIN {exit !($total_time < $best_time)}"; then
+      if awk "BEGIN {exit !($mirror_time < $best_time)}"; then
         best="$mirror_url"
-        best_time="$total_time"
+        best_time="$mirror_time"
       fi
     fi
   done <<< "$mirror_list"
@@ -576,7 +583,8 @@ _select_mirror() {
 # ─── Backup ───────────────────────────────────────────────────────────────────
 
 _create_backup() {
-  local backup_dir="${BACKUP_BASE}/$(date '+%Y-%m-%d_%H-%M-%S')"
+  local backup_dir
+  backup_dir="${BACKUP_BASE}/$(date '+%Y-%m-%d_%H-%M-%S')"
   mkdir -p "$backup_dir"
 
   local backed_up=0
@@ -691,14 +699,16 @@ _restore_backup() {
   if [[ -z "$backup_path" ]]; then
     # Find the most recent backup
     if [[ -d "$BACKUP_BASE" ]]; then
-      backup_path=$(ls -1dt "${BACKUP_BASE}"/*/ 2>/dev/null | head -1)
+      backup_path=$(find "$BACKUP_BASE" -mindepth 1 -maxdepth 1 -type d -printf '%T@\t%p\n' 2>/dev/null \
+        | sort -rn | head -1 | cut -f2)
     fi
   fi
 
   if [[ -z "$backup_path" ]] || [[ ! -d "$backup_path" ]]; then
     # Try the old backup location
     if [[ -d "/root" ]]; then
-      backup_path=$(ls -1dt /root/apt-backup-*/ 2>/dev/null | head -1)
+      backup_path=$(find /root -maxdepth 1 -name 'apt-backup-*' -type d -printf '%T@\t%p\n' 2>/dev/null \
+        | sort -rn | head -1 | cut -f2)
     fi
   fi
 
@@ -764,7 +774,7 @@ DRYRUN
 
   # Create backup
   local backup_dir
-  backup_dir=$(_create_backup)
+  backup_dir="$(_create_backup)"
 
   # Write configuration
   _write_apt_sources "$SELECTED_MIRROR"
@@ -799,8 +809,13 @@ DRYRUN
 _print_json() {
   local status="success"
   local action="mirror_selected"
-  [[ "$DRY_RUN" == true ]] && action="dry_run"
-  [[ "$RESTORE" == true ]] && action="backup_restored"
+
+  if [[ "$DRY_RUN" == true ]]; then
+    action="dry_run"
+  fi
+  if [[ "$RESTORE" == true ]]; then
+    action="backup_restored"
+  fi
 
   cat <<JSON
 {
@@ -855,8 +870,12 @@ EOF
 }
 
 _print_banner() {
-  [[ "$QUIET" == true ]] && return
-  [[ "$JSON_OUTPUT" == true ]] && return
+  if [[ "$QUIET" == true ]]; then
+    return
+  fi
+  if [[ "$JSON_OUTPUT" == true ]]; then
+    return
+  fi
   cat <<EOF
 
 ${COLOR_BOLD}${COLOR_CYAN}  ${APP_NAME} v${APP_VERSION}${COLOR_RESET}
@@ -972,7 +991,9 @@ _parse_args() {
         exit "$EXIT_OK"
         ;;
       -m|--mirror)
-        [[ "${2:-}" ]] || die "Option $1 requires a URL argument" "$EXIT_USAGE"
+        if [[ ! "${2:-}" ]]; then
+          die "Option $1 requires a URL argument" "$EXIT_USAGE"
+        fi
         FORCE_MIRROR="${2%/}"
         shift 2
         ;;
@@ -981,7 +1002,9 @@ _parse_args() {
         shift
         ;;
       --restore-path)
-        [[ "${2:-}" ]] || die "Option $1 requires a path argument" "$EXIT_USAGE"
+        if [[ ! "${2:-}" ]]; then
+          die "Option $1 requires a path argument" "$EXIT_USAGE"
+        fi
         RESTORE_PATH="${2}"
         RESTORE=true
         shift 2
@@ -1018,13 +1041,19 @@ _parse_args() {
         shift
         ;;
       --timeout)
-        [[ "${2:-}" ]] || die "Option $1 requires a number" "$EXIT_USAGE"
-        [[ "$2" =~ ^[0-9]+$ ]] || die "Option $1 requires a positive integer" "$EXIT_USAGE"
+        if [[ ! "${2:-}" ]]; then
+          die "Option $1 requires a number" "$EXIT_USAGE"
+        fi
+        if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+          die "Option $1 requires a positive integer" "$EXIT_USAGE"
+        fi
         TIMEOUT_TOTAL="$2"
         shift 2
         ;;
       --country)
-        [[ "${2:-}" ]] || die "Option $1 requires a country code" "$EXIT_USAGE"
+        if [[ ! "${2:-}" ]]; then
+          die "Option $1 requires a country code" "$EXIT_USAGE"
+        fi
         COUNTRY_FILTER="$2"
         shift 2
         ;;
@@ -1033,7 +1062,9 @@ _parse_args() {
         shift
         ;;
       --log-file)
-        [[ "${2:-}" ]] || die "Option $1 requires a file path" "$EXIT_USAGE"
+        if [[ ! "${2:-}" ]]; then
+          die "Option $1 requires a file path" "$EXIT_USAGE"
+        fi
         LOG_FILE="$2"
         LOG_ENABLED=true
         shift 2
@@ -1083,6 +1114,7 @@ main() {
   if [[ -n "$FORCE_MIRROR" ]]; then
     msg_color "$COLOR_BOLD" "Testing forced mirror: $FORCE_MIRROR"
     echo ""
+    local total_time
     if total_time=$(_test_mirror "$FORCE_MIRROR"); then
       SELECTED_MIRROR="$FORCE_MIRROR"
       SELECTED_TIME="$total_time"
