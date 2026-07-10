@@ -42,6 +42,14 @@ readonly EXIT_USAGE=2
 
 # ─── Global State ─────────────────────────────────────────────────────────────
 
+# Detect script invocation name for restore command
+_SCRIPT_NAME="${BASH_SOURCE[0]}"
+if [[ "$_SCRIPT_NAME" == "bash" ]] || [[ "$_SCRIPT_NAME" == "/usr/bin/bash" ]]; then
+  _SCRIPT_NAME="power-apt-boost.sh"
+elif [[ "$_SCRIPT_NAME" == *"power-apt-boost"* ]]; then
+  _SCRIPT_NAME="$(basename "$_SCRIPT_NAME")"
+fi
+
 CODENAME=""
 SELECTED_MIRROR=""
 SELECTED_TIME=""
@@ -68,14 +76,14 @@ _tmp_files=()
 
 _setup_colors() {
   if [[ -t 2 ]] && [[ "${TERM:-}" != "dumb" ]]; then
-    readonly COLOR_RED='\033[0;31m'
-    readonly COLOR_GREEN='\033[0;32m'
-    readonly COLOR_YELLOW='\033[0;33m'
-    readonly COLOR_BLUE='\033[0;34m'
-    readonly COLOR_CYAN='\033[0;36m'
-    readonly COLOR_BOLD='\033[1m'
-    readonly COLOR_DIM='\033[2m'
-    readonly COLOR_RESET='\033[0m'
+    readonly COLOR_RED=$'\033[0;31m'
+    readonly COLOR_GREEN=$'\033[0;32m'
+    readonly COLOR_YELLOW=$'\033[0;33m'
+    readonly COLOR_BLUE=$'\033[0;34m'
+    readonly COLOR_CYAN=$'\033[0;36m'
+    readonly COLOR_BOLD=$'\033[1m'
+    readonly COLOR_DIM=$'\033[2m'
+    readonly COLOR_RESET=$'\033[0m'
   else
     readonly COLOR_RED=''
     readonly COLOR_GREEN=''
@@ -168,8 +176,9 @@ _cleanup_processes() {
 }
 
 _cleanup() {
-  local exit_code
-  exit_code=$?
+  # Capture $? atomically — must be first statement.
+  # SC2155 does NOT apply: $? is a special variable, not a command substitution.
+  local exit_code=$?
   _cleanup_processes
   _cleanup_tmp
 
@@ -208,7 +217,18 @@ _make_tmp() {
 
 need_root() {
   if [[ "$(id -u)" -ne 0 ]]; then
-    die "This script must be run as root. Use: sudo $0"
+    die "This script must be run as root. Use: sudo bash ${_SCRIPT_NAME}"
+  fi
+
+  # Detect hostname resolution issues (common on VPS/cloud instances)
+  local _hostname_output
+  if _hostname_output=$(hostname 2>&1); then
+    :
+  elif [[ "$_hostname_output" == *"unable to resolve host"* ]]; then
+    warn "Hostname resolution issue detected — this is a system config problem"
+    warn "  (inconsistent hostname in /etc/hosts), not a Power APT Boost issue."
+    warn "  The script will continue safely."
+    warn "  Fix: add your hostname to /etc/hosts (e.g. '127.0.0.1 $(hostname 2>/dev/null || echo localhost)')"
   fi
 }
 
@@ -263,8 +283,22 @@ detect_ubuntu() {
 
 # ─── Mirror List ──────────────────────────────────────────────────────────────
 
-# Global Ubuntu mirrors — no regional bias
+# Mirror list — Iranian mirrors first for geographic optimization,
+# then international mirrors as fallback.
 _DEFAULT_MIRRORS=(
+  # ── Iran (tested, low-latency for Iranian users) ─────────
+  "https://ir.archive.ubuntu.com/ubuntu"
+  "https://mirror.arvancloud.ir/ubuntu"
+  "https://mirror.iranserver.com/ubuntu"
+  "https://ubuntu.hostiran.ir/ubuntu"
+  "https://mirror.hostbaran.com/ubuntu"
+  "https://mirror.aminidc.com/ubuntu"
+  "https://archive.ito.gov.ir/ubuntu"
+  "https://archive.ubuntu.petiak.ir/ubuntu"
+  "https://mirror.mobinhost.com/ubuntu"
+  "https://linuxmirrors.ir/ubuntu"
+  "https://mirror.kubarcloud.com/ubuntu"
+
   # ── Global ─────────────────────────────────────────────
   "https://archive.ubuntu.com/ubuntu"
   "https://mirrors.kernel.org/ubuntu"
@@ -276,8 +310,6 @@ _DEFAULT_MIRRORS=(
   "https://mirror.csclub.uwaterloo.ca/ubuntu"
   "https://mirror.rit.edu/ubuntu"
   "https://mirror.arizona.edu/ubuntu"
-  "https://mirror.asciichost.com/ubuntu"
-  "https://mirror.dal10.us.leaseweb.net/ubuntu"
 
   # ── UK ─────────────────────────────────────────────────
   "https://uk.archive.ubuntu.com/ubuntu"
@@ -296,28 +328,6 @@ _DEFAULT_MIRRORS=(
 
   # ── Americas ───────────────────────────────────────────
   "https://br.archive.ubuntu.com/ubuntu"
-
-  # ── Iran ───────────────────────────────────────────────
-  # Dedicated Iranian mirror pool for users in Iran.
-  # These mirrors are located in Iran and provide low-latency
-  # access to Ubuntu repositories for Iranian users.
-  "https://ir.archive.ubuntu.com/ubuntu"
-  "https://mirror.iranserver.com/ubuntu"
-  "https://mirror.kernel.ir/ubuntu"
-  "https://mirror.arvancloud.ir/ubuntu"
-  "https://ubuntu.hostiran.ir/ubuntu"
-  "https://mirror.hostbaran.com/ubuntu"
-  "https://mirror.aminidc.com/ubuntu"
-  "https://archive.ito.gov.ir/ubuntu"
-  "https://mirror.faraso.org/ubuntu"
-  "https://archive.ubuntu.petiak.ir/ubuntu"
-  "https://mirror.kimiahost.com/ubuntu"
-  "https://mirror.mobinhost.com/ubuntu"
-  "https://mirror.pishgaman.net/ubuntu"
-  "https://mirror.sindad.com/ubuntu"
-  "https://linuxmirrors.ir/ubuntu"
-  "https://mirror.jamko.ir/ubuntu"
-  "https://mirror.kubarcloud.com/ubuntu"
 )
 
 _get_mirrors() {
@@ -357,18 +367,20 @@ list_mirrors() {
   echo ""
   echo "Ubuntu codename: $CODENAME"
   echo ""
-  printf '%-50s  %s\n' "MIRROR" "STATUS"
-  printf '%-50s  %s\n' "$(printf '%0.s-' {1..50})" "------"
+  printf '%-50s  %-8s  %s\n' "MIRROR" "STATUS" "DETAIL"
+  printf '%-50s  %-8s  %s\n' "$(printf '%0.s-' {1..50})" "--------" "$(printf '%0.s-' {1..30})"
 
-  local mirror_url
+  local mirror_url probe_result http_code reason
   while IFS= read -r mirror_url; do
     local main_url="${mirror_url}/dists/${CODENAME}/InRelease"
-    local code
-    code=$(_probe_url_code "$main_url")
-    if [[ "$code" == "200" ]]; then
-      printf '%-50s  %s\n' "$mirror_url" "OK"
+    probe_result=$(_probe_url_code "$main_url")
+    http_code="${probe_result%% *}"
+    reason="${probe_result#* }"
+    [[ "$reason" == "$http_code" ]] && reason=""
+    if [[ "$http_code" == "200" ]]; then
+      printf '%-50s  %-8s  %s\n' "$mirror_url" "OK" ""
     else
-      printf '%-50s  %s\n' "$mirror_url" "FAIL (HTTP $code)"
+      printf '%-50s  %-8s  %s\n' "$mirror_url" "FAIL" "HTTP $http_code${reason:+ — $reason}"
     fi
   done < <(_get_mirrors)
 }
@@ -378,36 +390,101 @@ list_mirrors() {
 _probe_url_code() {
   local url="$1"
   local ip_flag="-4"
+  local reason=""
 
   if [[ "$USE_IPV6" == true ]]; then
     ip_flag="-6"
   fi
 
   if command -v curl >/dev/null 2>&1; then
-    curl "$ip_flag" -L -sS --connect-timeout "$PROBE_TIMEOUT_CONNECT" \
+    local curl_stderr
+    curl_stderr=$(mktemp "${TMPDIR:-/tmp}/${APP_SLUG}.curlerr.XXXXXX")
+    _tmp_files+=("$curl_stderr")
+
+    local http_code
+    http_code=$(curl "$ip_flag" -L -sS --connect-timeout "$PROBE_TIMEOUT_CONNECT" \
       --max-time "$TIMEOUT_TOTAL" -o /dev/null \
-      -w '%{http_code}' "$url" 2>/dev/null || echo "000"
+      -w '%{http_code}' "$url" 2>"$curl_stderr") || true
+
+    if [[ "$http_code" == "000" ]] || [[ -z "$http_code" ]]; then
+      reason=$(_classify_curl_error "$curl_stderr")
+      http_code="000"
+    fi
+    rm -f "$curl_stderr" 2>/dev/null || true
+    echo "${http_code} ${reason}"
     return
   fi
 
   if command -v wget >/dev/null 2>&1; then
+    local wget_output
+    wget_output=$(wget "$ip_flag" --server-response --spider \
+      --timeout="$TIMEOUT_TOTAL" --tries=1 -q "$url" 2>&1) || true
+
     local http_code
-    http_code=$(wget "$ip_flag" --server-response --spider \
-      --timeout="$TIMEOUT_TOTAL" --tries=1 -q "$url" 2>&1 \
-      | awk '/HTTP\// {print $2}') || true
-    echo "${http_code:-000}"
+    http_code=$(echo "$wget_output" | awk '/HTTP\// {print $2}')
+    http_code="${http_code:-000}"
+
+    if [[ "$http_code" == "000" ]]; then
+      reason=$(_classify_wget_error "$wget_output")
+    fi
+    echo "${http_code} ${reason}"
     return
   fi
 
-  echo "000"
+  echo "000 no_http_client"
+}
+
+_classify_curl_error() {
+  local stderr_file="$1"
+  local content
+  content=$(cat "$stderr_file" 2>/dev/null || true)
+
+  if [[ "$content" == *"Could not resolve host"* ]] || [[ "$content" == *"resolve"* ]]; then
+    echo "DNS resolution failed"
+  elif [[ "$content" == *"Connection refused"* ]]; then
+    echo "Connection refused"
+  elif [[ "$content" == *"Connection timed out"* ]] || [[ "$content" == *"timed out"* ]]; then
+    echo "Connection timed out"
+  elif [[ "$content" == *"SSL"* ]] || [[ "$content" == *"TLS"* ]] || [[ "$content" == *"certificate"* ]]; then
+    echo "TLS handshake failed"
+  elif [[ "$content" == *"Network is unreachable"* ]]; then
+    echo "Network unreachable"
+  elif [[ "$content" == *"No route to host"* ]]; then
+    echo "No route to host"
+  elif [[ "$content" == *"Empty reply from server"* ]]; then
+    echo "Empty reply from server"
+  else
+    echo "Connection failed"
+  fi
+}
+
+_classify_wget_error() {
+  local output="$1"
+
+  if [[ "$output" == *"Failed to resolve"* ]] || [[ "$output" == *"Unknown host"* ]]; then
+    echo "DNS resolution failed"
+  elif [[ "$output" == *"Connection refused"* ]]; then
+    echo "Connection refused"
+  elif [[ "$output" == *"timed out"* ]] || [[ "$output" == *"timed-out"* ]]; then
+    echo "Connection timed out"
+  elif [[ "$output" == *"SSL"* ]] || [[ "$output" == *"certificate"* ]]; then
+    echo "TLS handshake failed"
+  elif [[ "$output" == *"Network is unreachable"* ]]; then
+    echo "Network unreachable"
+  else
+    echo "Connection failed"
+  fi
 }
 
 _probe_url_timed() {
   local url="$1"
-  local start end elapsed code
+  local start end elapsed probe_result http_code reason
 
   start=$(date +%s%N 2>/dev/null || date +%s)
-  code=$(_probe_url_code "$url")
+  probe_result=$(_probe_url_code "$url")
+  http_code="${probe_result%% *}"
+  reason="${probe_result#* }"
+  [[ "$reason" == "$http_code" ]] && reason=""
   end=$(date +%s%N 2>/dev/null || date +%s)
 
   # Calculate elapsed time
@@ -419,7 +496,7 @@ _probe_url_timed() {
     elapsed="$(( end - start )).000000"
   fi
 
-  echo "$code $elapsed"
+  echo "$http_code $elapsed $reason"
 }
 
 # ─── Spinner ──────────────────────────────────────────────────────────────────
@@ -486,7 +563,9 @@ _stop_spinner() {
 
 _test_mirror() {
   local base_url="$1"
-  local main_code main_time updates_code updates_time security_code security_time
+  local main_code main_time main_reason
+  local updates_code updates_time updates_reason
+  local security_code security_time security_reason
   local result total_time
 
   base_url="${base_url%/}"
@@ -501,28 +580,49 @@ _test_mirror() {
   _start_spinner "Testing main repository"
   result=$(_probe_url_timed "$main_url")
   main_code="${result%% *}"
-  main_time="${result#* }"
-  _stop_spinner "$([ "$main_code" = "200" ] && echo "OK" || echo "FAIL")" \
-    "main: HTTP $main_code in ${main_time}s" \
-    "$([ "$main_code" = "200" ] && echo "$COLOR_GREEN" || echo "$COLOR_RED")"
+  result="${result#* }"
+  main_time="${result%% *}"
+  main_reason="${result#* }"
+  [[ "$main_reason" == "$main_time" ]] && main_reason=""
+  if [[ "$main_code" == "200" ]]; then
+    _stop_spinner "OK" "main: HTTP $main_code in ${main_time}s" "$COLOR_GREEN"
+  else
+    local fail_msg="main: HTTP $main_code in ${main_time}s"
+    [[ -n "$main_reason" ]] && fail_msg="${fail_msg} — ${main_reason}"
+    _stop_spinner "FAIL" "$fail_msg" "$COLOR_RED"
+  fi
 
   # Test updates
   _start_spinner "Testing updates repository"
   result=$(_probe_url_timed "$updates_url")
   updates_code="${result%% *}"
-  updates_time="${result#* }"
-  _stop_spinner "$([ "$updates_code" = "200" ] && echo "OK" || echo "FAIL")" \
-    "updates: HTTP $updates_code in ${updates_time}s" \
-    "$([ "$updates_code" = "200" ] && echo "$COLOR_GREEN" || echo "$COLOR_RED")"
+  result="${result#* }"
+  updates_time="${result%% *}"
+  updates_reason="${result#* }"
+  [[ "$updates_reason" == "$updates_time" ]] && updates_reason=""
+  if [[ "$updates_code" == "200" ]]; then
+    _stop_spinner "OK" "updates: HTTP $updates_code in ${updates_time}s" "$COLOR_GREEN"
+  else
+    local fail_msg="updates: HTTP $updates_code in ${updates_time}s"
+    [[ -n "$updates_reason" ]] && fail_msg="${fail_msg} — ${updates_reason}"
+    _stop_spinner "FAIL" "$fail_msg" "$COLOR_RED"
+  fi
 
   # Test security
   _start_spinner "Testing security repository"
   result=$(_probe_url_timed "$security_url")
   security_code="${result%% *}"
-  security_time="${result#* }"
-  _stop_spinner "$([ "$security_code" = "200" ] && echo "OK" || echo "FAIL")" \
-    "security: HTTP $security_code in ${security_time}s" \
-    "$([ "$security_code" = "200" ] && echo "$COLOR_GREEN" || echo "$COLOR_RED")"
+  result="${result#* }"
+  security_time="${result%% *}"
+  security_reason="${result#* }"
+  [[ "$security_reason" == "$security_time" ]] && security_reason=""
+  if [[ "$security_code" == "200" ]]; then
+    _stop_spinner "OK" "security: HTTP $security_code in ${security_time}s" "$COLOR_GREEN"
+  else
+    local fail_msg="security: HTTP $security_code in ${security_time}s"
+    [[ -n "$security_reason" ]] && fail_msg="${fail_msg} — ${security_reason}"
+    _stop_spinner "FAIL" "$fail_msg" "$COLOR_RED"
+  fi
 
   # Check all passed
   if [[ "$main_code" == "200" ]] && [[ "$updates_code" == "200" ]] && [[ "$security_code" == "200" ]]; then
@@ -538,7 +638,8 @@ _test_mirror() {
 _select_mirror() {
   local best=""
   local best_time="999999"
-  local mirror_url total_time tested=0 passed=0
+  local mirror_url total_time tested=0 passed=0 failed=0
+  local bench_start bench_end bench_duration
 
   msg_color "$COLOR_BOLD" "Ubuntu codename: $CODENAME"
   echo ""
@@ -550,6 +651,8 @@ _select_mirror() {
   total_mirrors=$(echo "$mirror_list" | wc -l)
   msg_color "$COLOR_BOLD" "Testing $total_mirrors mirrors..."
   echo ""
+
+  bench_start=$(date +%s)
 
   while IFS= read -r mirror_url; do
     if [[ -z "$mirror_url" ]]; then
@@ -566,11 +669,26 @@ _select_mirror() {
         best="$mirror_url"
         best_time="$mirror_time"
       fi
+    else
+      failed=$((failed + 1))
     fi
   done <<< "$mirror_list"
 
+  bench_end=$(date +%s)
+  bench_duration=$(( bench_end - bench_start ))
+
   echo ""
-  msg "Mirrors tested: $tested, available: $passed"
+  msg_color "$COLOR_BOLD" "─── Benchmark Summary ───"
+  msg "  Total mirrors tested:  $tested"
+  msg "  Successful mirrors:    $passed"
+  msg "  Failed mirrors:        $failed"
+  msg "  Total duration:        ${bench_duration}s"
+
+  if [[ -n "$best" ]]; then
+    msg_color "$COLOR_GREEN" "  Selected mirror:       $best"
+    msg "  Selection reason:      Fastest response (${best_time}s total)"
+  fi
+  echo ""
 
   if [[ -z "$best" ]]; then
     die "No working mirror found. Check your network connection and try again.\n  Possible causes:\n    - Firewall blocking Ubuntu repository access\n    - DNS resolution failure\n    - Network connectivity issue"
@@ -862,7 +980,7 @@ ${COLOR_GREEN}  APT mirror optimized successfully${COLOR_RESET}
     ${APT_CONF_FILE}
 
   To restore a previous configuration:
-    sudo $0 --restore
+    sudo bash ${_SCRIPT_NAME} --restore
 
 ${COLOR_BOLD}════════════════════════════════════════════════════════════${COLOR_RESET}
 
@@ -892,7 +1010,7 @@ _print_help() {
 ${APP_NAME} v${APP_VERSION} — Fast Ubuntu APT mirror selector
 
 ${COLOR_BOLD}USAGE${COLOR_RESET}
-  sudo bash $0 [OPTIONS]
+  sudo bash ${_SCRIPT_NAME} [OPTIONS]
   curl -fsSL ${APP_GITHUB}/raw/main/power-apt-boost.sh | sudo bash
 
 ${COLOR_BOLD}OPTIONS${COLOR_RESET}
@@ -915,25 +1033,25 @@ ${COLOR_BOLD}OPTIONS${COLOR_RESET}
 
 ${COLOR_BOLD}EXAMPLES${COLOR_RESET}
   ${COLOR_DIM}# Auto-select fastest mirror${COLOR_RESET}
-  sudo bash $0
+  sudo bash ${_SCRIPT_NAME}
 
   ${COLOR_DIM}# Test without changes${COLOR_RESET}
-  sudo bash $0 --dry-run
+  sudo bash ${_SCRIPT_NAME} --dry-run
 
   ${COLOR_DIM}# Use a specific mirror${COLOR_RESET}
-  sudo bash $0 --mirror https://mirror.example.com/ubuntu
+  sudo bash ${_SCRIPT_NAME} --mirror https://mirror.example.com/ubuntu
 
   ${COLOR_DIM}# Restore from latest backup${COLOR_RESET}
-  sudo bash $0 --restore
+  sudo bash ${_SCRIPT_NAME} --restore
 
   ${COLOR_DIM}# Machine-readable output for CI/CD${COLOR_RESET}
-  sudo bash $0 --json --quiet
+  sudo bash ${_SCRIPT_NAME} --json --quiet
 
   ${COLOR_DIM}# List and test all mirrors${COLOR_RESET}
-  sudo bash $0 --list
+  sudo bash ${_SCRIPT_NAME} --list
 
   ${COLOR_DIM}# Filter by country${COLOR_RESET}
-  sudo bash $0 --country us
+  sudo bash ${_SCRIPT_NAME} --country us
 
   ${COLOR_DIM}# Pipe install${COLOR_RESET}
   curl -fsSL ${APP_GITHUB}/raw/main/power-apt-boost.sh | sudo bash
@@ -953,8 +1071,8 @@ ${COLOR_BOLD}BACKUPS${COLOR_RESET}
   Old backups in:       /root/apt-backup-*/
 
   To restore:
-    sudo $0 --restore
-    sudo $0 --restore-path /var/backups/${APP_SLUG}/2025-01-01_12-00-00
+    sudo bash ${_SCRIPT_NAME} --restore
+    sudo bash ${_SCRIPT_NAME} --restore-path /var/backups/${APP_SLUG}/2025-01-01_12-00-00
 
 ${COLOR_BOLD}EXIT CODES${COLOR_RESET}
   ${COLOR_GREEN}0${COLOR_RESET}  Success

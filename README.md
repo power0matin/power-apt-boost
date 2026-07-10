@@ -215,40 +215,36 @@ Only mirrors that return HTTP 200 for all three are considered. The fastest mirr
 
 ### Default mirrors
 
+Iranian mirrors are tested first for geographic optimization, then international mirrors as fallback.
+
 | Region | Mirrors |
 |--------|---------|
+| Iran | `ir.archive.ubuntu.com`, `mirror.arvancloud.ir`, `mirror.iranserver.com`, `ubuntu.hostiran.ir`, `mirror.hostbaran.com`, `mirror.aminidc.com`, `archive.ito.gov.ir`, `archive.ubuntu.petiak.ir`, `mirror.mobinhost.com`, `linuxmirrors.ir`, `mirror.kubarcloud.com` |
 | Global | `archive.ubuntu.com`, `mirrors.kernel.org` |
-| US | `us.archive.ubuntu.com`, `mirror.math.princeton.edu`, `mirror.cs.uchicago.edu`, `mirror.rit.edu`, `mirror.arizona.edu` |
+| US | `us.archive.ubuntu.com`, `mirror.math.princeton.edu`, `mirror.cs.uchicago.edu`, `mirror.csclub.uwaterloo.ca`, `mirror.rit.edu`, `mirror.arizona.edu` |
 | UK | `uk.archive.ubuntu.com` |
 | Europe | `de.archive.ubuntu.com`, `fr.archive.ubuntu.com`, `it.archive.ubuntu.com`, `nl.archive.ubuntu.com` |
 | Asia-Pacific | `au.archive.ubuntu.com`, `jp.archive.ubuntu.com`, `kr.archive.ubuntu.com`, `in.archive.ubuntu.com` |
 | Americas | `br.archive.ubuntu.com` |
-| Iran | `ir.archive.ubuntu.com`, `mirror.iranserver.com`, `mirror.kernel.ir`, `mirror.arvancloud.ir`, `ubuntu.hostiran.ir`, and 12 more (see below) |
 
 ### Iranian Ubuntu Mirrors
 
-Power APT Boost includes a dedicated **Iranian mirror pool** for users located in Iran. These mirrors are located in Iran and provide low-latency access to Ubuntu repositories.
+Power APT Boost includes a dedicated **Iranian mirror pool** for users located in Iran. These mirrors are tested first for geographic optimization — reducing benchmark time for Iranian users.
 
 Iranian mirrors included in the default pool:
 
 | Mirror | URL |
 |--------|-----|
 | Ubuntu Iran Archive | `https://ir.archive.ubuntu.com/ubuntu` |
-| IranServer | `https://mirror.iranserver.com/ubuntu` |
-| Kernel.ir | `https://mirror.kernel.ir/ubuntu` |
 | ArvanCloud | `https://mirror.arvancloud.ir/ubuntu` |
+| IranServer | `https://mirror.iranserver.com/ubuntu` |
 | HostIran | `https://ubuntu.hostiran.ir/ubuntu` |
 | HostBaran | `https://mirror.hostbaran.com/ubuntu` |
 | AminiDC | `https://mirror.aminidc.com/ubuntu` |
 | ITO | `https://archive.ito.gov.ir/ubuntu` |
-| Faraso | `https://mirror.faraso.org/ubuntu` |
 | Petiak | `https://archive.ubuntu.petiak.ir/ubuntu` |
-| KimiaHost | `https://mirror.kimiahost.com/ubuntu` |
 | MobinHost | `https://mirror.mobinhost.com/ubuntu` |
-| Pishgaman | `https://mirror.pishgaman.net/ubuntu` |
-| Sindad | `https://mirror.sindad.com/ubuntu` |
 | LinuxMirrors | `https://linuxmirrors.ir/ubuntu` |
-| Jamko | `https://mirror.jamko.ir/ubuntu` |
 | KubarCloud | `https://mirror.kubarcloud.com/ubuntu` |
 
 To filter mirrors by Iran specifically:
