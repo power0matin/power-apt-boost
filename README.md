@@ -223,6 +223,45 @@ Only mirrors that return HTTP 200 for all three are considered. The fastest mirr
 | Europe | `de.archive.ubuntu.com`, `fr.archive.ubuntu.com`, `it.archive.ubuntu.com`, `nl.archive.ubuntu.com` |
 | Asia-Pacific | `au.archive.ubuntu.com`, `jp.archive.ubuntu.com`, `kr.archive.ubuntu.com`, `in.archive.ubuntu.com` |
 | Americas | `br.archive.ubuntu.com` |
+| Iran | `ir.archive.ubuntu.com`, `mirror.iranserver.com`, `mirror.kernel.ir`, `mirror.arvancloud.ir`, `ubuntu.hostiran.ir`, and 12 more (see below) |
+
+### Iranian Ubuntu Mirrors
+
+Power APT Boost includes a dedicated **Iranian mirror pool** for users located in Iran. These mirrors are located in Iran and provide low-latency access to Ubuntu repositories.
+
+Iranian mirrors included in the default pool:
+
+| Mirror | URL |
+|--------|-----|
+| Ubuntu Iran Archive | `https://ir.archive.ubuntu.com/ubuntu` |
+| IranServer | `https://mirror.iranserver.com/ubuntu` |
+| Kernel.ir | `https://mirror.kernel.ir/ubuntu` |
+| ArvanCloud | `https://mirror.arvancloud.ir/ubuntu` |
+| HostIran | `https://ubuntu.hostiran.ir/ubuntu` |
+| HostBaran | `https://mirror.hostbaran.com/ubuntu` |
+| AminiDC | `https://mirror.aminidc.com/ubuntu` |
+| ITO | `https://archive.ito.gov.ir/ubuntu` |
+| Faraso | `https://mirror.faraso.org/ubuntu` |
+| Petiak | `https://archive.ubuntu.petiak.ir/ubuntu` |
+| KimiaHost | `https://mirror.kimiahost.com/ubuntu` |
+| MobinHost | `https://mirror.mobinhost.com/ubuntu` |
+| Pishgaman | `https://mirror.pishgaman.net/ubuntu` |
+| Sindad | `https://mirror.sindad.com/ubuntu` |
+| LinuxMirrors | `https://linuxmirrors.ir/ubuntu` |
+| Jamko | `https://mirror.jamko.ir/ubuntu` |
+| KubarCloud | `https://mirror.kubarcloud.com/ubuntu` |
+
+To filter mirrors by Iran specifically:
+
+```bash
+sudo bash power-apt-boost.sh --country ir
+```
+
+To use a specific Iranian mirror:
+
+```bash
+sudo bash power-apt-boost.sh --mirror https://mirror.arvancloud.ir/ubuntu
+```
 
 ## Exit Codes
 

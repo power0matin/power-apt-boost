@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- 17 Iranian Ubuntu mirrors to the default mirror pool for users in Iran
+- Iranian mirror pool section in README with all mirror URLs
+
 ## [2.0.0] — 2025-07-10
 
 ### Added

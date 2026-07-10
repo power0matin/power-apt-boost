@@ -264,19 +264,12 @@ detect_ubuntu() {
 
 # Global Ubuntu mirrors — no regional bias
 _DEFAULT_MIRRORS=(
+  # ── Global ─────────────────────────────────────────────
   "https://archive.ubuntu.com/ubuntu"
-  "https://us.archive.ubuntu.com/ubuntu"
-  "https://uk.archive.ubuntu.com/ubuntu"
-  "https://de.archive.ubuntu.com/ubuntu"
-  "https://fr.archive.ubuntu.com/ubuntu"
-  "https://it.archive.ubuntu.com/ubuntu"
-  "https://nl.archive.ubuntu.com/ubuntu"
-  "https://au.archive.ubuntu.com/ubuntu"
-  "https://jp.archive.ubuntu.com/ubuntu"
-  "https://kr.archive.ubuntu.com/ubuntu"
-  "https://in.archive.ubuntu.com/ubuntu"
-  "https://br.archive.ubuntu.com/ubuntu"
   "https://mirrors.kernel.org/ubuntu"
+
+  # ── US ─────────────────────────────────────────────────
+  "https://us.archive.ubuntu.com/ubuntu"
   "https://mirror.math.princeton.edu/pub/ubuntu"
   "https://mirror.cs.uchicago.edu/ubuntu"
   "https://mirror.csclub.uwaterloo.ca/ubuntu"
@@ -284,6 +277,46 @@ _DEFAULT_MIRRORS=(
   "https://mirror.arizona.edu/ubuntu"
   "https://mirror.asciichost.com/ubuntu"
   "https://mirror.dal10.us.leaseweb.net/ubuntu"
+
+  # ── UK ─────────────────────────────────────────────────
+  "https://uk.archive.ubuntu.com/ubuntu"
+
+  # ── Europe ─────────────────────────────────────────────
+  "https://de.archive.ubuntu.com/ubuntu"
+  "https://fr.archive.ubuntu.com/ubuntu"
+  "https://it.archive.ubuntu.com/ubuntu"
+  "https://nl.archive.ubuntu.com/ubuntu"
+
+  # ── Asia-Pacific ───────────────────────────────────────
+  "https://au.archive.ubuntu.com/ubuntu"
+  "https://jp.archive.ubuntu.com/ubuntu"
+  "https://kr.archive.ubuntu.com/ubuntu"
+  "https://in.archive.ubuntu.com/ubuntu"
+
+  # ── Americas ───────────────────────────────────────────
+  "https://br.archive.ubuntu.com/ubuntu"
+
+  # ── Iran ───────────────────────────────────────────────
+  # Dedicated Iranian mirror pool for users in Iran.
+  # These mirrors are located in Iran and provide low-latency
+  # access to Ubuntu repositories for Iranian users.
+  "https://ir.archive.ubuntu.com/ubuntu"
+  "https://mirror.iranserver.com/ubuntu"
+  "https://mirror.kernel.ir/ubuntu"
+  "https://mirror.arvancloud.ir/ubuntu"
+  "https://ubuntu.hostiran.ir/ubuntu"
+  "https://mirror.hostbaran.com/ubuntu"
+  "https://mirror.aminidc.com/ubuntu"
+  "https://archive.ito.gov.ir/ubuntu"
+  "https://mirror.faraso.org/ubuntu"
+  "https://archive.ubuntu.petiak.ir/ubuntu"
+  "https://mirror.kimiahost.com/ubuntu"
+  "https://mirror.mobinhost.com/ubuntu"
+  "https://mirror.pishgaman.net/ubuntu"
+  "https://mirror.sindad.com/ubuntu"
+  "https://linuxmirrors.ir/ubuntu"
+  "https://mirror.jamko.ir/ubuntu"
+  "https://mirror.kubarcloud.com/ubuntu"
 )
 
 _get_mirrors() {
