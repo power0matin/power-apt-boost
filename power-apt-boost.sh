@@ -745,11 +745,11 @@ _write_apt_sources() {
   # Check for existing non-Ubuntu sources in sources.list
   local has_third_party=false
   if [[ -f "$APT_SOURCES_FILE" ]]; then
-    if grep -v '^\s*$' "$APT_SOURCES_FILE" 2>/dev/null \
-      | grep -v '^\s*#' \
-      | grep -v 'archive.ubuntu.com' \
-      | grep -v 'security.ubuntu.com' \
-      | grep -q . 2>/dev/null; then
+    if grep -v '^\s*$' "$APT_SOURCES_FILE" 2>/dev/null |
+      grep -v '^\s*#' |
+      grep -v 'archive.ubuntu.com' |
+      grep -v 'security.ubuntu.com' |
+      grep -q . 2>/dev/null; then
       has_third_party=true
     fi
   fi
@@ -809,16 +809,16 @@ _restore_backup() {
   if [[ -z "$backup_path" ]]; then
     # Find the most recent backup
     if [[ -d "$BACKUP_BASE" ]]; then
-      backup_path=$(find "$BACKUP_BASE" -mindepth 1 -maxdepth 1 -type d -printf '%T@\t%p\n' 2>/dev/null \
-        | sort -rn | head -1 | cut -f2)
+      backup_path=$(find "$BACKUP_BASE" -mindepth 1 -maxdepth 1 -type d -printf '%T@\t%p\n' 2>/dev/null |
+        sort -rn | head -1 | cut -f2)
     fi
   fi
 
   if [[ -z "$backup_path" ]] || [[ ! -d "$backup_path" ]]; then
     # Try the old backup location
     if [[ -d "/root" ]]; then
-      backup_path=$(find /root -maxdepth 1 -name 'apt-backup-*' -type d -printf '%T@\t%p\n' 2>/dev/null \
-        | sort -rn | head -1 | cut -f2)
+      backup_path=$(find /root -maxdepth 1 -name 'apt-backup-*' -type d -printf '%T@\t%p\n' 2>/dev/null |
+        sort -rn | head -1 | cut -f2)
     fi
   fi
 
@@ -1092,99 +1092,99 @@ _parse_args() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      -h | --help)
-        _print_help
-        exit "$EXIT_OK"
-        ;;
-      -v | --version)
-        echo "$APP_NAME v$APP_VERSION"
-        exit "$EXIT_OK"
-        ;;
-      -m | --mirror)
-        if [[ ! "${2:-}" ]]; then
-          die "Option $1 requires a URL argument" "$EXIT_USAGE"
-        fi
-        FORCE_MIRROR="${2%/}"
-        shift 2
-        ;;
-      -r | --restore)
-        RESTORE=true
-        shift
-        ;;
-      --restore-path)
-        if [[ ! "${2:-}" ]]; then
-          die "Option $1 requires a path argument" "$EXIT_USAGE"
-        fi
-        RESTORE_PATH="${2}"
-        RESTORE=true
-        shift 2
-        ;;
-      --dry-run)
-        DRY_RUN=true
-        shift
-        ;;
-      --skip-update)
-        SKIP_UPDATE=true
-        shift
-        ;;
-      --list)
-        _check_probe_tool
-        list_mirrors
-        exit "$EXIT_OK"
-        ;;
-      --json)
-        JSON_OUTPUT=true
-        QUIET=true
-        NO_SPINNER=true
-        shift
-        ;;
-      --verbose)
-        VERBOSE=true
-        shift
-        ;;
-      --quiet)
-        QUIET=true
-        shift
-        ;;
-      --no-spinner)
-        NO_SPINNER=true
-        shift
-        ;;
-      --timeout)
-        if [[ ! "${2:-}" ]]; then
-          die "Option $1 requires a number" "$EXIT_USAGE"
-        fi
-        if [[ ! "$2" =~ ^[0-9]+$ ]]; then
-          die "Option $1 requires a positive integer" "$EXIT_USAGE"
-        fi
-        TIMEOUT_TOTAL="$2"
-        shift 2
-        ;;
-      --country)
-        if [[ ! "${2:-}" ]]; then
-          die "Option $1 requires a country code" "$EXIT_USAGE"
-        fi
-        COUNTRY_FILTER="$2"
-        shift 2
-        ;;
-      --ipv6)
-        USE_IPV6=true
-        shift
-        ;;
-      --log-file)
-        if [[ ! "${2:-}" ]]; then
-          die "Option $1 requires a file path" "$EXIT_USAGE"
-        fi
-        LOG_FILE="$2"
-        LOG_ENABLED=true
-        shift 2
-        ;;
-      -*)
-        die "Unknown option: $1\nRun '$0 --help' for usage information." "$EXIT_USAGE"
-        ;;
-      *)
-        die "Unexpected argument: $1\nRun '$0 --help' for usage information." "$EXIT_USAGE"
-        ;;
+    -h | --help)
+      _print_help
+      exit "$EXIT_OK"
+      ;;
+    -v | --version)
+      echo "$APP_NAME v$APP_VERSION"
+      exit "$EXIT_OK"
+      ;;
+    -m | --mirror)
+      if [[ ! "${2:-}" ]]; then
+        die "Option $1 requires a URL argument" "$EXIT_USAGE"
+      fi
+      FORCE_MIRROR="${2%/}"
+      shift 2
+      ;;
+    -r | --restore)
+      RESTORE=true
+      shift
+      ;;
+    --restore-path)
+      if [[ ! "${2:-}" ]]; then
+        die "Option $1 requires a path argument" "$EXIT_USAGE"
+      fi
+      RESTORE_PATH="${2}"
+      RESTORE=true
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --skip-update)
+      SKIP_UPDATE=true
+      shift
+      ;;
+    --list)
+      _check_probe_tool
+      list_mirrors
+      exit "$EXIT_OK"
+      ;;
+    --json)
+      JSON_OUTPUT=true
+      QUIET=true
+      NO_SPINNER=true
+      shift
+      ;;
+    --verbose)
+      VERBOSE=true
+      shift
+      ;;
+    --quiet)
+      QUIET=true
+      shift
+      ;;
+    --no-spinner)
+      NO_SPINNER=true
+      shift
+      ;;
+    --timeout)
+      if [[ ! "${2:-}" ]]; then
+        die "Option $1 requires a number" "$EXIT_USAGE"
+      fi
+      if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+        die "Option $1 requires a positive integer" "$EXIT_USAGE"
+      fi
+      TIMEOUT_TOTAL="$2"
+      shift 2
+      ;;
+    --country)
+      if [[ ! "${2:-}" ]]; then
+        die "Option $1 requires a country code" "$EXIT_USAGE"
+      fi
+      COUNTRY_FILTER="$2"
+      shift 2
+      ;;
+    --ipv6)
+      USE_IPV6=true
+      shift
+      ;;
+    --log-file)
+      if [[ ! "${2:-}" ]]; then
+        die "Option $1 requires a file path" "$EXIT_USAGE"
+      fi
+      LOG_FILE="$2"
+      LOG_ENABLED=true
+      shift 2
+      ;;
+    -*)
+      die "Unknown option: $1\nRun '$0 --help' for usage information." "$EXIT_USAGE"
+      ;;
+    *)
+      die "Unexpected argument: $1\nRun '$0 --help' for usage information." "$EXIT_USAGE"
+      ;;
     esac
   done
 }
