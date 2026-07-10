@@ -1,0 +1,9 @@
+# Power APT Boost — ShellCheck configuration
+# https://www.shellcheck.net/wiki/
+
+# Default shell dialect
+shell=bash
+
+# Global disables
+# SC1091 — Cannot follow source (dynamic paths)
+disable=SC1091

@@ -1,5 +1,22 @@
+# Enforce LF line endings
 *.sh text eol=lf
 *.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
 LICENSE text eol=lf
 .gitignore text eol=lf
 .gitattributes text eol=lf
+.editorconfig text eol=lf
+.shellcheckrc text eol=lf
+CONTRIBUTING.md text eol=lf
+SECURITY.md text eol=lf
+CODE_OF_CONDUCT.md text eol=lf
+ROADMAP.md text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.gif binary
+*.pdf binary

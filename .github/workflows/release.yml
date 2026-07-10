@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Lint
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          sudo curl -fsSL -o /usr/local/bin/shfmt \
+            "https://github.com/mvdan/sh/releases/download/v3.7.0/shfmt_v3.7.0_linux_amd64"
+          sudo chmod +x /usr/local/bin/shfmt
+          shellcheck -x power-apt-boost.sh
+          shfmt -d power-apt-boost.sh
+
+      - name: Get version
+        id: version
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Extract changelog for this version
+          version="${{ steps.version.outputs.tag }}"
+          changelog=$(awk "/^## ${version#v}/,/^## [0-9]/" CHANGELOG.md | sed '$ d')
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$changelog" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Power APT Boost ${{ steps.version.outputs.tag }}"
+          body: |
+            ## Changes
+
+            ${{ steps.changelog.outputs.changelog }}
+
+            ## Installation
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/power0matin/power-apt-boost/${{ steps.version.outputs.tag }}/power-apt-boost.sh | sudo bash
+            ```
+
+            ## Verify
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/power0matin/power-apt-boost/${{ steps.version.outputs.tag }}/power-apt-boost.sh | sha256sum
+            ```
+          files: power-apt-boost.sh
+          draft: false
+          prerelease: false
