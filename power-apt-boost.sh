@@ -125,8 +125,14 @@ msg_verbose() {
 }
 
 info() { msg_color "$COLOR_GREEN" "[OK] $*"; }
-warn() { msg_color "$COLOR_YELLOW" "[WARN] $*"; _log_to_file "WARN: $*"; }
-error() { msg_color "$COLOR_RED" "[ERROR] $*"; _log_to_file "ERROR: $*"; }
+warn() {
+  msg_color "$COLOR_YELLOW" "[WARN] $*"
+  _log_to_file "WARN: $*"
+}
+error() {
+  msg_color "$COLOR_RED" "[ERROR] $*"
+  _log_to_file "ERROR: $*"
+}
 
 die() {
   error "$1"
@@ -157,7 +163,7 @@ _cleanup() {
 
   if [[ -t 2 ]]; then printf "\r\033[K" >&2 2>/dev/null || true; fi
 
-  [[ "$LOG_ENABLED" == true ]] && [[ -n "$LOG_FILE" ]] && \
+  [[ "$LOG_ENABLED" == true ]] && [[ -n "$LOG_FILE" ]] &&
     _log_to_file "Session ended with exit code $exit_code"
 
   exit "$exit_code"
@@ -320,14 +326,14 @@ _classify_curl_error() {
   local content
   content=$(cat "$1" 2>/dev/null || true)
   case "$content" in
-    *"Could not resolve host"*|*"resolve"*) echo "DNS resolution failed" ;;
-    *"Connection refused"*)                  echo "Connection refused" ;;
-    *"Connection timed out"*|*"timed out"*)  echo "Connection timed out" ;;
-    *"SSL"*|*"TLS"*|*"certificate"*)        echo "TLS handshake failed" ;;
-    *"Network is unreachable"*)              echo "Network unreachable" ;;
-    *"No route to host"*)                    echo "No route to host" ;;
-    *"Empty reply from server"*)            echo "Empty reply from server" ;;
-    *)                                       echo "Connection failed" ;;
+  *"Could not resolve host"* | *"resolve"*) echo "DNS resolution failed" ;;
+  *"Connection refused"*) echo "Connection refused" ;;
+  *"Connection timed out"* | *"timed out"*) echo "Connection timed out" ;;
+  *"SSL"* | *"TLS"* | *"certificate"*) echo "TLS handshake failed" ;;
+  *"Network is unreachable"*) echo "Network unreachable" ;;
+  *"No route to host"*) echo "No route to host" ;;
+  *"Empty reply from server"*) echo "Empty reply from server" ;;
+  *) echo "Connection failed" ;;
   esac
 }
 
@@ -335,12 +341,12 @@ _classify_curl_error() {
 _classify_wget_error() {
   local output="$1"
   case "$output" in
-    *"Failed to resolve"*|*"Unknown host"*) echo "DNS resolution failed" ;;
-    *"Connection refused"*)                  echo "Connection refused" ;;
-    *"timed out"*|*"timed-out"*)             echo "Connection timed out" ;;
-    *"SSL"*|*"certificate"*)                echo "TLS handshake failed" ;;
-    *"Network is unreachable"*)              echo "Network unreachable" ;;
-    *)                                       echo "Connection failed" ;;
+  *"Failed to resolve"* | *"Unknown host"*) echo "DNS resolution failed" ;;
+  *"Connection refused"*) echo "Connection refused" ;;
+  *"timed out"* | *"timed-out"*) echo "Connection timed out" ;;
+  *"SSL"* | *"certificate"*) echo "TLS handshake failed" ;;
+  *"Network is unreachable"*) echo "Network unreachable" ;;
+  *) echo "Connection failed" ;;
   esac
 }
 
@@ -405,16 +411,16 @@ _test_mirror() {
   local start end elapsed
   start=$(date +%s%N 2>/dev/null || date +%s)
 
-  _probe_url_code "$main_url"     >"${tmpdir}/main" 2>"${tmpdir}/main.err"  &
+  _probe_url_code "$main_url" >"${tmpdir}/main" 2>"${tmpdir}/main.err" &
   local pid_main=$!
-  _probe_url_code "$updates_url"  >"${tmpdir}/upd"  2>"${tmpdir}/upd.err"   &
+  _probe_url_code "$updates_url" >"${tmpdir}/upd" 2>"${tmpdir}/upd.err" &
   local pid_updates=$!
-  _probe_url_code "$security_url" >"${tmpdir}/sec"  2>"${tmpdir}/sec.err"   &
+  _probe_url_code "$security_url" >"${tmpdir}/sec" 2>"${tmpdir}/sec.err" &
   local pid_security=$!
 
   # ── Wait for all three probes ────────────────────────────────
-  wait "$pid_main"     2>/dev/null || true
-  wait "$pid_updates"  2>/dev/null || true
+  wait "$pid_main" 2>/dev/null || true
+  wait "$pid_updates" 2>/dev/null || true
   wait "$pid_security" 2>/dev/null || true
 
   end=$(date +%s%N 2>/dev/null || date +%s)
@@ -435,18 +441,24 @@ _test_mirror() {
   rm -rf "$tmpdir" 2>/dev/null || true
 
   local main_code="${main_result%% *}"
-  local main_time="${main_result#* }"; main_time="${main_time%% *}"
-  local main_reason="${main_result#* }"; main_reason="${main_reason#* }"
+  local main_time="${main_result#* }"
+  main_time="${main_time%% *}"
+  local main_reason="${main_result#* }"
+  main_reason="${main_reason#* }"
   [[ "$main_reason" == "$main_time" ]] && main_reason=""
 
   local updates_code="${updates_result%% *}"
-  local updates_time="${updates_result#* }"; updates_time="${updates_time%% *}"
-  local updates_reason="${updates_result#* }"; updates_reason="${updates_reason#* }"
+  local updates_time="${updates_result#* }"
+  updates_time="${updates_time%% *}"
+  local updates_reason="${updates_result#* }"
+  updates_reason="${updates_reason#* }"
   [[ "$updates_reason" == "$updates_time" ]] && updates_reason=""
 
   local security_code="${security_result%% *}"
-  local security_time="${security_result#* }"; security_time="${security_time%% *}"
-  local security_reason="${security_result#* }"; security_reason="${security_reason#* }"
+  local security_time="${security_result#* }"
+  security_time="${security_time%% *}"
+  local security_reason="${security_result#* }"
+  security_reason="${security_reason#* }"
   [[ "$security_reason" == "$security_time" ]] && security_reason=""
 
   # ── Print results to stderr (preserves original format) ──────
@@ -517,13 +529,13 @@ _select_mirror() {
 
   # ── Dispatch mirrors to worker pool ──────────────────────────
   local idx=0
-  while (( idx < total )); do
+  while ((idx < total)); do
     # Fill up to MAX_WORKERS slots
-    while (( ${#_bg_pids[@]} < MAX_WORKERS )) && (( idx < total )); do
+    while ((${#_bg_pids[@]} < MAX_WORKERS)) && ((idx < total)); do
       _bench_worker "$idx" "${mirrors[$idx]}" "$CODENAME" \
         "${bench_tmpdir}/${idx}.result" &
       _bg_pids+=($!)
-      (( idx++ ))
+      ((idx++))
     done
 
     # Wait for at least one worker to finish
@@ -551,19 +563,19 @@ _select_mirror() {
   # ── Collect results and find best ────────────────────────────
   local best="" best_time="999999" tested=0 passed=0 failed=0
   local i result_line rtime rstatus
-  for (( i=0; i<total; i++ )); do
+  for ((i = 0; i < total; i++)); do
     result_line=$(cat "${bench_tmpdir}/${i}.result" 2>/dev/null) || continue
-    (( tested++ )) || true
+    ((tested++)) || true
     rtime="${result_line%% *}"
     rstatus="${result_line#* }"
     if [[ "$rstatus" == "pass" ]]; then
-      (( passed++ )) || true
+      ((passed++)) || true
       if awk "BEGIN {exit !($rtime < $best_time)}"; then
         best="${mirrors[$i]}"
         best_time="$rtime"
       fi
     else
-      (( failed++ )) || true
+      ((failed++)) || true
     fi
   done
 
@@ -602,19 +614,19 @@ _create_backup() {
 
   if [[ -f "$APT_DEB822_FILE" ]]; then
     cp -a "$APT_DEB822_FILE" "$backup_dir/ubuntu.sources" 2>/dev/null || true
-    (( backed_up++ )) || true
+    ((backed_up++)) || true
   fi
   if [[ -f "$APT_SOURCES_FILE" ]]; then
     cp -a "$APT_SOURCES_FILE" "$backup_dir/sources.list" 2>/dev/null || true
-    (( backed_up++ )) || true
+    ((backed_up++)) || true
   fi
   if [[ -d "$APT_SOURCES_DIR" ]]; then
     cp -a "$APT_SOURCES_DIR" "$backup_dir/sources.list.d" 2>/dev/null || true
-    (( backed_up++ )) || true
+    ((backed_up++)) || true
   fi
   if [[ -d "$APT_CONF_DIR" ]]; then
     cp -a "$APT_CONF_DIR" "$backup_dir/apt.conf.d" 2>/dev/null || true
-    (( backed_up++ )) || true
+    ((backed_up++)) || true
   fi
 
   if [[ $backed_up -eq 0 ]]; then
