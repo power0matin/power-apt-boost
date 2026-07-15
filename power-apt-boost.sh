@@ -1010,6 +1010,7 @@ _parse_args() {
       shift
       ;;
     --no-spinner)
+      # shellcheck disable=SC2034
       NO_SPINNER=true
       shift
       ;;
