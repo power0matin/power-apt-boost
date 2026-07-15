@@ -5,7 +5,7 @@
 # Author  : Matin Shahabadi
 # GitHub  : https://github.com/power0matin/power-apt-boost
 # License : MIT
-# Version : 2.0.0
+# Version : 3.0.0
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/power0matin/power-apt-boost/main/power-apt-boost.sh | sudo bash
@@ -19,7 +19,7 @@ IFS=$'\n\t'
 # ─── Constants ────────────────────────────────────────────────────────────────
 
 readonly APP_NAME="Power APT Boost"
-readonly APP_VERSION="2.0.0"
+readonly APP_VERSION="3.0.0"
 readonly APP_SLUG="power-apt-boost"
 readonly APP_AUTHOR="Matin Shahabadi"
 readonly APP_GITHUB="https://github.com/power0matin/power-apt-boost"
@@ -33,9 +33,12 @@ readonly APT_CONF_FILE="${APT_CONF_DIR}/99-${APP_SLUG}"
 readonly BACKUP_BASE="/var/backups/${APP_SLUG}"
 readonly KEYRING_PATH="/usr/share/keyrings/ubuntu-archive-keyring.gpg"
 
-readonly PROBE_TIMEOUT_CONNECT=8
+readonly PROBE_TIMEOUT_CONNECT=5
+readonly PROBE_TIMEOUT_DNS=5
+readonly PROBE_TIMEOUT_TLS=10
+readonly PROBE_TIMEOUT_TOTAL=15
+readonly MAX_WORKERS=8
 
-# Exit codes
 readonly EXIT_OK=0
 readonly EXIT_GENERAL=1
 readonly EXIT_USAGE=2
@@ -43,7 +46,6 @@ readonly EXIT_USAGE=2
 # ─── Global State ─────────────────────────────────────────────────────────────
 
 # Detect script invocation name for restore command
-# Temporarily disable nounset: BASH_SOURCE is unset when piped from curl
 set +u
 _SCRIPT_NAME="${BASH_SOURCE[0]}"
 set -u
@@ -71,8 +73,8 @@ USE_IPV6=false
 LOG_FILE=""
 LOG_ENABLED=false
 
-_spinner_pid=""
-_tmp_files=()
+_tmp_dirs=()
+_bg_pids=()
 
 # ─── Color ────────────────────────────────────────────────────────────────────
 
@@ -107,84 +109,58 @@ _log_to_file() {
 }
 
 msg() {
-  if [[ "$QUIET" == true ]]; then
-    return
-  fi
+  [[ "$QUIET" == true ]] && return
   printf '%b\n' "$*" >&2
   _log_to_file "$*"
 }
 
 msg_color() {
-  if [[ "$QUIET" == true ]]; then
-    return
-  fi
+  [[ "$QUIET" == true ]] && return
   local color="$1" text="$2"
   printf '%b%b%b\n' "$color" "$text" "$COLOR_RESET" >&2
   _log_to_file "$text"
 }
 
 msg_verbose() {
-  if [[ "$VERBOSE" == true ]]; then
-    msg "$@"
-  fi
+  [[ "$VERBOSE" == true ]] && msg "$@"
 }
 
-info() {
-  msg_color "$COLOR_GREEN" "[OK] $*"
-}
-
-warn() {
-  msg_color "$COLOR_YELLOW" "[WARN] $*"
-  _log_to_file "WARN: $*"
-}
-
-error() {
-  msg_color "$COLOR_RED" "[ERROR] $*"
-  _log_to_file "ERROR: $*"
-}
+info() { msg_color "$COLOR_GREEN" "[OK] $*"; }
+warn() { msg_color "$COLOR_YELLOW" "[WARN] $*"; _log_to_file "WARN: $*"; }
+error() { msg_color "$COLOR_RED" "[ERROR] $*"; _log_to_file "ERROR: $*"; }
 
 die() {
-  local exit_code="${2:-$EXIT_GENERAL}"
   error "$1"
-  exit "$exit_code"
+  exit "${2:-$EXIT_GENERAL}"
 }
 
 # ─── Cleanup & Signals ────────────────────────────────────────────────────────
 
-_cleanup_tmp() {
-  local f
-  if [[ ${#_tmp_files[@]} -gt 0 ]]; then
-    for f in "${_tmp_files[@]}"; do
-      if [[ -f "$f" ]]; then
-        rm -f "$f" 2>/dev/null || true
-      fi
-    done
-  fi
-  _tmp_files=()
-}
-
-_cleanup_processes() {
-  if [[ -n "${_spinner_pid:-}" ]]; then
-    kill "$_spinner_pid" 2>/dev/null || true
-    wait "$_spinner_pid" 2>/dev/null || true
-    _spinner_pid=""
-  fi
-}
-
 _cleanup() {
-  # Capture $? atomically — must be first statement.
-  # SC2155 does NOT apply: $? is a special variable, not a command substitution.
   local exit_code=$?
-  _cleanup_processes
-  _cleanup_tmp
 
-  if [[ -t 2 ]]; then
-    printf "\r\033[K" >&2 2>/dev/null || true
-  fi
+  # Kill all tracked background jobs
+  local pid
+  for pid in "${_bg_pids[@]}"; do
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  done
+  _bg_pids=()
 
-  if [[ "$LOG_ENABLED" == true ]] && [[ -n "$LOG_FILE" ]]; then
+  # Kill any remaining background jobs
+  { kill 0 2>/dev/null || true; } 2>/dev/null
+
+  # Clean temp dirs
+  local d
+  for d in "${_tmp_dirs[@]}"; do
+    [[ -d "$d" ]] && rm -rf "$d" 2>/dev/null || true
+  done
+  _tmp_dirs=()
+
+  [[ -t 2 ]] && printf "\r\033[K" >&2 2>/dev/null || true
+
+  [[ "$LOG_ENABLED" == true ]] && [[ -n "$LOG_FILE" ]] && \
     _log_to_file "Session ended with exit code $exit_code"
-  fi
 
   exit "$exit_code"
 }
@@ -192,22 +168,11 @@ _cleanup() {
 _handle_interrupt() {
   msg ""
   msg_color "$COLOR_YELLOW" "Interrupted by user. Cleaning up..."
-  _cleanup_processes
-  _cleanup_tmp
   exit 130
 }
 
 trap _cleanup EXIT
 trap _handle_interrupt INT TERM HUP
-
-# ─── Temporary Files ──────────────────────────────────────────────────────────
-
-_make_tmp() {
-  local tmp
-  tmp="$(mktemp "${TMPDIR:-/tmp}/${APP_SLUG}.XXXXXX")"
-  _tmp_files+=("$tmp")
-  echo "$tmp"
-}
 
 # ─── Root Check ───────────────────────────────────────────────────────────────
 
@@ -216,7 +181,6 @@ need_root() {
     die "This script must be run as root. Use: sudo bash ${_SCRIPT_NAME}"
   fi
 
-  # Detect hostname resolution issues (common on VPS/cloud instances)
   local _hostname_output
   if _hostname_output=$(hostname 2>&1); then
     :
@@ -231,47 +195,29 @@ need_root() {
 # ─── Dependency Check ─────────────────────────────────────────────────────────
 
 _check_commands() {
-  local missing=()
-  local cmd
-
+  local missing=() cmd
   for cmd in apt-get awk date grep mkdir cp id mktemp; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-      missing+=("$cmd")
-    fi
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
-
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    die "Missing required commands: ${missing[*]}"
-  fi
+  [[ ${#missing[@]} -gt 0 ]] && die "Missing required commands: ${missing[*]}"
 }
 
 _check_probe_tool() {
-  if command -v curl >/dev/null 2>&1; then
-    return 0
-  fi
-  if command -v wget >/dev/null 2>&1; then
-    return 0
-  fi
+  command -v curl >/dev/null 2>&1 && return 0
+  command -v wget >/dev/null 2>&1 && return 0
   die "curl or wget is required for mirror testing. Install one:\n  apt-get install -y curl"
 }
 
 # ─── Ubuntu Detection ────────────────────────────────────────────────────────
 
 detect_ubuntu() {
-  if [[ ! -f /etc/os-release ]]; then
-    die "/etc/os-release not found. This script requires Ubuntu."
-  fi
+  [[ -f /etc/os-release ]] || die "/etc/os-release not found. This script requires Ubuntu."
 
   # shellcheck disable=SC1091
   source /etc/os-release
 
-  if [[ "${ID:-}" != "ubuntu" ]]; then
-    die "This script supports Ubuntu only. Detected: ${PRETTY_NAME:-${ID:-unknown}} (${ID:-unknown})"
-  fi
-
-  if [[ -z "${VERSION_CODENAME:-}" ]]; then
-    die "Could not detect Ubuntu version codename from /etc/os-release."
-  fi
+  [[ "${ID:-}" == "ubuntu" ]] || die "This script supports Ubuntu only. Detected: ${PRETTY_NAME:-${ID:-unknown}} (${ID:-unknown})"
+  [[ -n "${VERSION_CODENAME:-}" ]] || die "Could not detect Ubuntu version codename from /etc/os-release."
 
   CODENAME="$VERSION_CODENAME"
   msg_verbose "Detected Ubuntu ${VERSION_ID:-} (${CODENAME})"
@@ -279,8 +225,6 @@ detect_ubuntu() {
 
 # ─── Mirror List ──────────────────────────────────────────────────────────────
 
-# Mirror list — Iranian mirrors first for geographic optimization,
-# then international mirrors as fallback.
 _DEFAULT_MIRRORS=(
   # ── Iran (tested, low-latency for Iranian users) ─────────
   "https://ir.archive.ubuntu.com/ubuntu"
@@ -329,26 +273,17 @@ _DEFAULT_MIRRORS=(
 _get_mirrors() {
   local mirrors=()
 
-  # Use country-specific mirrors if filter is set
   if [[ -n "$COUNTRY_FILTER" ]]; then
-    local country_lower
+    local country_lower mirror_url
     country_lower="$(echo "$COUNTRY_FILTER" | tr '[:upper:]' '[:lower:]')"
-    local mirror_url
     for mirror_url in "${_DEFAULT_MIRRORS[@]}"; do
-      if [[ "$mirror_url" == *"//${country_lower}."* ]]; then
-        mirrors+=("$mirror_url")
-      fi
+      [[ "$mirror_url" == *"//${country_lower}."* ]] && mirrors+=("$mirror_url")
     done
-    # Fall back to all mirrors if no country-specific ones found
-    if [[ ${#mirrors[@]} -eq 0 ]]; then
-      msg_verbose "No mirrors found for country filter '$COUNTRY_FILTER', using all mirrors"
-      mirrors=("${_DEFAULT_MIRRORS[@]}")
-    fi
+    [[ ${#mirrors[@]} -eq 0 ]] && mirrors=("${_DEFAULT_MIRRORS[@]}")
   else
     mirrors=("${_DEFAULT_MIRRORS[@]}")
   fi
 
-  # Add forced mirror at the front if set
   if [[ -n "$FORCE_MIRROR" ]]; then
     mirrors=("$FORCE_MIRROR" "${mirrors[@]}")
   fi
@@ -368,8 +303,7 @@ list_mirrors() {
 
   local mirror_url probe_result http_code reason
   while IFS= read -r mirror_url; do
-    local main_url="${mirror_url}/dists/${CODENAME}/InRelease"
-    probe_result=$(_probe_url_code "$main_url")
+    probe_result=$(_probe_url_code "${mirror_url}/dists/${CODENAME}/InRelease")
     http_code="${probe_result%% *}"
     reason="${probe_result#* }"
     [[ "$reason" == "$http_code" ]] && reason=""
@@ -383,24 +317,51 @@ list_mirrors() {
 
 # ─── HTTP Probing ─────────────────────────────────────────────────────────────
 
+# Curl-specific error classification
+_classify_curl_error() {
+  local content
+  content=$(cat "$1" 2>/dev/null || true)
+  case "$content" in
+    *"Could not resolve host"*|*"resolve"*) echo "DNS resolution failed" ;;
+    *"Connection refused"*)                  echo "Connection refused" ;;
+    *"Connection timed out"*|*"timed out"*)  echo "Connection timed out" ;;
+    *"SSL"*|*"TLS"*|*"certificate"*)        echo "TLS handshake failed" ;;
+    *"Network is unreachable"*)              echo "Network unreachable" ;;
+    *"No route to host"*)                    echo "No route to host" ;;
+    *"Empty reply from server"*)            echo "Empty reply from server" ;;
+    *)                                       echo "Connection failed" ;;
+  esac
+}
+
+# Wget-specific error classification
+_classify_wget_error() {
+  local output="$1"
+  case "$output" in
+    *"Failed to resolve"*|*"Unknown host"*) echo "DNS resolution failed" ;;
+    *"Connection refused"*)                  echo "Connection refused" ;;
+    *"timed out"*|*"timed-out"*)             echo "Connection timed out" ;;
+    *"SSL"*|*"certificate"*)                echo "TLS handshake failed" ;;
+    *"Network is unreachable"*)              echo "Network unreachable" ;;
+    *)                                       echo "Connection failed" ;;
+  esac
+}
+
+# Probe a single URL. Writes "http_code reason" to stdout.
 _probe_url_code() {
   local url="$1"
   local ip_flag="-4"
-  local reason=""
-  local http_code
+  local reason="" http_code
 
-  if [[ "$USE_IPV6" == true ]]; then
-    ip_flag="-6"
-  fi
+  [[ "$USE_IPV6" == true ]] && ip_flag="-6"
 
   if command -v curl >/dev/null 2>&1; then
     local curl_stderr
     curl_stderr=$(mktemp "${TMPDIR:-/tmp}/${APP_SLUG}.curlerr.XXXXXX")
-    _tmp_files+=("$curl_stderr")
 
-    http_code=$(curl "$ip_flag" -L -sS --connect-timeout "$PROBE_TIMEOUT_CONNECT" \
-      --max-time "$TIMEOUT_TOTAL" -o /dev/null \
-      -w '%{http_code}' "$url" 2>"$curl_stderr") || true
+    http_code=$(curl "$ip_flag" -L -sS \
+      --connect-timeout "$PROBE_TIMEOUT_CONNECT" \
+      --max-time "$PROBE_TIMEOUT_TOTAL" \
+      -o /dev/null -w '%{http_code}' "$url" 2>"$curl_stderr") || true
 
     if [[ "$http_code" == "000" ]] || [[ -z "$http_code" ]]; then
       reason=$(_classify_curl_error "$curl_stderr")
@@ -415,13 +376,9 @@ _probe_url_code() {
     local wget_output
     wget_output=$(wget "$ip_flag" --server-response --spider \
       --timeout="$TIMEOUT_TOTAL" --tries=1 -q "$url" 2>&1) || true
-
     http_code=$(echo "$wget_output" | awk '/HTTP\// {print $2}')
     http_code="${http_code:-000}"
-
-    if [[ "$http_code" == "000" ]]; then
-      reason=$(_classify_wget_error "$wget_output")
-    fi
+    [[ "$http_code" == "000" ]] && reason=$(_classify_wget_error "$wget_output")
     echo "${http_code} ${reason}"
     return
   fi
@@ -429,249 +386,192 @@ _probe_url_code() {
   echo "000 no_http_client"
 }
 
-_classify_curl_error() {
-  local stderr_file="$1"
-  local content
-  content=$(cat "$stderr_file" 2>/dev/null || true)
+# ─── Mirror Testing ──────────────────────────────────────────────────────────
 
-  if [[ "$content" == *"Could not resolve host"* ]] || [[ "$content" == *"resolve"* ]]; then
-    echo "DNS resolution failed"
-  elif [[ "$content" == *"Connection refused"* ]]; then
-    echo "Connection refused"
-  elif [[ "$content" == *"Connection timed out"* ]] || [[ "$content" == *"timed out"* ]]; then
-    echo "Connection timed out"
-  elif [[ "$content" == *"SSL"* ]] || [[ "$content" == *"TLS"* ]] || [[ "$content" == *"certificate"* ]]; then
-    echo "TLS handshake failed"
-  elif [[ "$content" == *"Network is unreachable"* ]]; then
-    echo "Network unreachable"
-  elif [[ "$content" == *"No route to host"* ]]; then
-    echo "No route to host"
-  elif [[ "$content" == *"Empty reply from server"* ]]; then
-    echo "Empty reply from server"
-  else
-    echo "Connection failed"
-  fi
-}
+# Test a single mirror: probes main/updates/security in parallel.
+# Writes "total_time pass|fail" to result_file (arg $2).
+# Prints per-component status lines to stderr.
+_test_mirror() {
+  local base_url="${1%/}"
+  local result_file="$2"
+  local codename="$3"
+  local main_url="${base_url}/dists/${codename}/InRelease"
+  local updates_url="${base_url}/dists/${codename}-updates/InRelease"
+  local security_url="${base_url}/dists/${codename}-security/InRelease"
 
-_classify_wget_error() {
-  local output="$1"
+  # Create temp dir for probe stderr files
+  local tmpdir
+  tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/${APP_SLUG}.mirror.XXXXXX")
 
-  if [[ "$output" == *"Failed to resolve"* ]] || [[ "$output" == *"Unknown host"* ]]; then
-    echo "DNS resolution failed"
-  elif [[ "$output" == *"Connection refused"* ]]; then
-    echo "Connection refused"
-  elif [[ "$output" == *"timed out"* ]] || [[ "$output" == *"timed-out"* ]]; then
-    echo "Connection timed out"
-  elif [[ "$output" == *"SSL"* ]] || [[ "$output" == *"certificate"* ]]; then
-    echo "TLS handshake failed"
-  elif [[ "$output" == *"Network is unreachable"* ]]; then
-    echo "Network unreachable"
-  else
-    echo "Connection failed"
-  fi
-}
-
-_probe_url_timed() {
-  local url="$1"
-  local start end elapsed probe_result http_code reason
-
+  # ── Launch three probes in parallel ──────────────────────────
+  local start end elapsed
   start=$(date +%s%N 2>/dev/null || date +%s)
-  probe_result=$(_probe_url_code "$url")
-  http_code="${probe_result%% *}"
-  reason="${probe_result#* }"
-  [[ "$reason" == "$http_code" ]] && reason=""
+
+  _probe_url_code "$main_url"     >"${tmpdir}/main" 2>"${tmpdir}/main.err"  &
+  local pid_main=$!
+  _probe_url_code "$updates_url"  >"${tmpdir}/upd"  2>"${tmpdir}/upd.err"   &
+  local pid_updates=$!
+  _probe_url_code "$security_url" >"${tmpdir}/sec"  2>"${tmpdir}/sec.err"   &
+  local pid_security=$!
+
+  # ── Wait for all three probes ────────────────────────────────
+  wait "$pid_main"     2>/dev/null || true
+  wait "$pid_updates"  2>/dev/null || true
+  wait "$pid_security" 2>/dev/null || true
+
   end=$(date +%s%N 2>/dev/null || date +%s)
 
-  # Calculate elapsed time
+  # Elapsed time (wall-clock of the parallel batch)
   if [[ ${#start} -gt 10 ]]; then
-    # nanosecond precision
     elapsed=$(awk "BEGIN {printf \"%.6f\", ($end - $start) / 1000000000}")
   else
-    # second precision fallback
     elapsed="$((end - start)).000000"
   fi
 
-  echo "$http_code $elapsed $reason"
-}
+  # ── Parse results ────────────────────────────────────────────
+  local main_result updates_result security_result
+  main_result=$(cat "${tmpdir}/main" 2>/dev/null)
+  updates_result=$(cat "${tmpdir}/upd" 2>/dev/null)
+  security_result=$(cat "${tmpdir}/sec" 2>/dev/null)
 
-# ─── Spinner ──────────────────────────────────────────────────────────────────
+  rm -rf "$tmpdir" 2>/dev/null || true
 
-_supports_spinner() {
-  [[ "$NO_SPINNER" == false ]] && [[ -t 2 ]] && [[ "$QUIET" == false ]]
-}
+  local main_code="${main_result%% *}"
+  local main_time="${main_result#* }"; main_time="${main_time%% *}"
+  local main_reason="${main_result#* }"; main_reason="${main_reason#* }"
+  [[ "$main_reason" == "$main_time" ]] && main_reason=""
 
-_start_spinner() {
-  local message="$1"
+  local updates_code="${updates_result%% *}"
+  local updates_time="${updates_result#* }"; updates_time="${updates_time%% *}"
+  local updates_reason="${updates_result#* }"; updates_reason="${updates_reason#* }"
+  [[ "$updates_reason" == "$updates_time" ]] && updates_reason=""
 
-  if ! _supports_spinner; then
-    msg_verbose "... $message"
-    return
-  fi
+  local security_code="${security_result%% *}"
+  local security_time="${security_result#* }"; security_time="${security_time%% *}"
+  local security_reason="${security_result#* }"; security_reason="${security_reason#* }"
+  [[ "$security_reason" == "$security_time" ]] && security_reason=""
 
-  (
-    local -a frames
-    frames[0]='|'
-    frames[1]='/'
-    frames[2]='-'
-    frames[3]=$'\x5c'
-    local i=0
-    while true; do
-      printf "\r\033[K  [%s] %s" "${frames[$i]}" "$message" >&2
-      i=$(((i + 1) % 4))
-      sleep 0.12
-    done
-  ) &
-  _spinner_pid=$!
-}
-
-_stop_spinner() {
-  local status="$1"
-  local message="$2"
-  local color="$3"
-
-  if [[ -n "${_spinner_pid:-}" ]]; then
-    kill "$_spinner_pid" 2>/dev/null || true
-    wait "$_spinner_pid" 2>/dev/null || true
-    _spinner_pid=""
-  fi
-
-  if _supports_spinner; then
-    if [[ "$status" == "OK" ]]; then
-      printf '%b\r\033[K[%s] %s%b\n' "$COLOR_GREEN" "$status" "$message" "$COLOR_RESET" >&2
-    elif [[ "$status" == "FAIL" ]]; then
-      printf '%b\r\033[K[%s] %s%b\n' "$COLOR_RED" "$status" "$message" "$COLOR_RESET" >&2
-    else
-      printf "\r\033[K[%s] %s\n" "$status" "$message" >&2
-    fi
-  else
-    if [[ "$status" == "OK" ]]; then
-      info "[$status] $message"
-    elif [[ "$status" == "FAIL" ]]; then
-      error "[$status] $message"
-    else
-      msg "[$status] $message"
-    fi
-  fi
-}
-
-# ─── Mirror Testing ──────────────────────────────────────────────────────────
-
-_test_mirror() {
-  local base_url="$1"
-  local main_code main_time main_reason
-  local updates_code updates_time updates_reason
-  local security_code security_time security_reason
-  local result total_time fail_msg
-
-  base_url="${base_url%/}"
-
-  local main_url="${base_url}/dists/${CODENAME}/InRelease"
-  local updates_url="${base_url}/dists/${CODENAME}-updates/InRelease"
-  local security_url="${base_url}/dists/${CODENAME}-security/InRelease"
-
+  # ── Print results to stderr (preserves original format) ──────
   msg_color "$COLOR_BLUE" "==> $base_url"
 
-  # Test main
-  _start_spinner "Testing main repository"
-  result=$(_probe_url_timed "$main_url")
-  main_code="${result%% *}"
-  result="${result#* }"
-  main_time="${result%% *}"
-  main_reason="${result#* }"
-  [[ "$main_reason" == "$main_time" ]] && main_reason=""
+  local fail_msg
   if [[ "$main_code" == "200" ]]; then
-    _stop_spinner "OK" "main: HTTP $main_code in ${main_time}s" "$COLOR_GREEN"
+    info "[OK] main: HTTP $main_code in ${main_time}s"
   else
     fail_msg="main: HTTP $main_code in ${main_time}s"
     [[ -n "$main_reason" ]] && fail_msg="${fail_msg} — ${main_reason}"
-    _stop_spinner "FAIL" "$fail_msg" "$COLOR_RED"
+    error "[FAIL] $fail_msg"
   fi
 
-  # Test updates
-  _start_spinner "Testing updates repository"
-  result=$(_probe_url_timed "$updates_url")
-  updates_code="${result%% *}"
-  result="${result#* }"
-  updates_time="${result%% *}"
-  updates_reason="${result#* }"
-  [[ "$updates_reason" == "$updates_time" ]] && updates_reason=""
   if [[ "$updates_code" == "200" ]]; then
-    _stop_spinner "OK" "updates: HTTP $updates_code in ${updates_time}s" "$COLOR_GREEN"
+    info "[OK] updates: HTTP $updates_code in ${updates_time}s"
   else
     fail_msg="updates: HTTP $updates_code in ${updates_time}s"
     [[ -n "$updates_reason" ]] && fail_msg="${fail_msg} — ${updates_reason}"
-    _stop_spinner "FAIL" "$fail_msg" "$COLOR_RED"
+    error "[FAIL] $fail_msg"
   fi
 
-  # Test security
-  _start_spinner "Testing security repository"
-  result=$(_probe_url_timed "$security_url")
-  security_code="${result%% *}"
-  result="${result#* }"
-  security_time="${result%% *}"
-  security_reason="${result#* }"
-  [[ "$security_reason" == "$security_time" ]] && security_reason=""
   if [[ "$security_code" == "200" ]]; then
-    _stop_spinner "OK" "security: HTTP $security_code in ${security_time}s" "$COLOR_GREEN"
+    info "[OK] security: HTTP $security_code in ${security_time}s"
   else
     fail_msg="security: HTTP $security_code in ${security_time}s"
     [[ -n "$security_reason" ]] && fail_msg="${fail_msg} — ${security_reason}"
-    _stop_spinner "FAIL" "$fail_msg" "$COLOR_RED"
+    error "[FAIL] $fail_msg"
   fi
 
-  # Check all passed
+  # ── Write result to file ─────────────────────────────────────
   if [[ "$main_code" == "200" ]] && [[ "$updates_code" == "200" ]] && [[ "$security_code" == "200" ]]; then
-    total_time=$(awk "BEGIN {printf \"%.6f\", $main_time + $updates_time + $security_time}")
-    msg_verbose "  Total time: ${total_time}s"
-    echo "$total_time"
-    return 0
+    echo "${elapsed} pass" >"$result_file"
+  else
+    echo "${elapsed} fail" >"$result_file"
   fi
-
-  return 1
 }
 
+# ─── Parallel Benchmark ──────────────────────────────────────────────────────
+
 _select_mirror() {
-  local best=""
-  local best_time="999999"
-  local mirror_url total_time tested=0 passed=0 failed=0
-  local bench_start bench_end bench_duration
+  local mirror_list total_mirrors bench_start bench_end bench_duration
 
   msg_color "$COLOR_BOLD" "Ubuntu codename: $CODENAME"
   echo ""
 
-  local mirror_list
   mirror_list=$(_get_mirrors)
-
-  local total_mirrors
   total_mirrors=$(echo "$mirror_list" | wc -l)
-  msg_color "$COLOR_BOLD" "Testing $total_mirrors mirrors..."
+  msg_color "$COLOR_BOLD" "Testing $total_mirrors mirrors (up to $MAX_WORKERS in parallel)..."
   echo ""
 
   bench_start=$(date +%s)
 
-  while IFS= read -r mirror_url; do
-    if [[ -z "$mirror_url" ]]; then
-      continue
-    fi
-    tested=$((tested + 1))
+  # ── Create temp dir for result files ─────────────────────────
+  local bench_tmpdir
+  bench_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/${APP_SLUG}.bench.XXXXXX")
 
-    local mirror_time
-    if mirror_time=$(_test_mirror "$mirror_url"); then
-      passed=$((passed + 1))
+  # ── Read mirror list into array for indexed access ───────────
+  local -a mirrors
+  mapfile -t mirrors <<<"$mirror_list"
+  local total=${#mirrors[@]}
 
-      # Compare times using awk for float comparison
-      if awk "BEGIN {exit !($mirror_time < $best_time)}"; then
-        best="$mirror_url"
-        best_time="$mirror_time"
+  # ── Worker: test one mirror, write result to file ────────────
+  _bench_worker() {
+    local idx="$1" url="$2" codename="$3" result_file="$4"
+    _test_mirror "$url" "$result_file" "$codename"
+  }
+
+  # ── Dispatch mirrors to worker pool ──────────────────────────
+  local idx=0
+  while (( idx < total )); do
+    # Fill up to MAX_WORKERS slots
+    while (( ${#_bg_pids[@]} < MAX_WORKERS )) && (( idx < total )); do
+      _bench_worker "$idx" "${mirrors[$idx]}" "$CODENAME" \
+        "${bench_tmpdir}/${idx}.result" &
+      _bg_pids+=($!)
+      (( idx++ ))
+    done
+
+    # Wait for at least one worker to finish
+    local new_pids=()
+    local pid
+    for pid in "${_bg_pids[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        new_pids+=("$pid")
+      else
+        wait "$pid" 2>/dev/null || true
       fi
-    else
-      failed=$((failed + 1))
-    fi
-  done <<<"$mirror_list"
+    done
+    _bg_pids=("${new_pids[@]+"${new_pids[@]}"}")
+  done
+
+  # ── Wait for remaining workers ───────────────────────────────
+  for pid in "${_bg_pids[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+  _bg_pids=()
 
   bench_end=$(date +%s)
   bench_duration=$((bench_end - bench_start))
 
+  # ── Collect results and find best ────────────────────────────
+  local best="" best_time="999999" tested=0 passed=0 failed=0
+  local i result_line rtime rstatus
+  for (( i=0; i<total; i++ )); do
+    result_line=$(cat "${bench_tmpdir}/${i}.result" 2>/dev/null) || continue
+    (( tested++ )) || true
+    rtime="${result_line%% *}"
+    rstatus="${result_line#* }"
+    if [[ "$rstatus" == "pass" ]]; then
+      (( passed++ )) || true
+      if awk "BEGIN {exit !($rtime < $best_time)}"; then
+        best="${mirrors[$i]}"
+        best_time="$rtime"
+      fi
+    else
+      (( failed++ )) || true
+    fi
+  done
+
+  rm -rf "$bench_tmpdir" 2>/dev/null || true
+
+  # ── Print summary (matches original format exactly) ──────────
   echo ""
   msg_color "$COLOR_BOLD" "─── Benchmark Summary ───"
   msg "  Total mirrors tested:  $tested"
@@ -702,28 +602,21 @@ _create_backup() {
 
   local backed_up=0
 
-  # Backup deb822 sources
   if [[ -f "$APT_DEB822_FILE" ]]; then
     cp -a "$APT_DEB822_FILE" "$backup_dir/ubuntu.sources" 2>/dev/null || true
-    backed_up=$((backed_up + 1))
+    (( backed_up++ )) || true
   fi
-
-  # Backup legacy sources.list
   if [[ -f "$APT_SOURCES_FILE" ]]; then
     cp -a "$APT_SOURCES_FILE" "$backup_dir/sources.list" 2>/dev/null || true
-    backed_up=$((backed_up + 1))
+    (( backed_up++ )) || true
   fi
-
-  # Backup sources.list.d
   if [[ -d "$APT_SOURCES_DIR" ]]; then
     cp -a "$APT_SOURCES_DIR" "$backup_dir/sources.list.d" 2>/dev/null || true
-    backed_up=$((backed_up + 1))
+    (( backed_up++ )) || true
   fi
-
-  # Backup apt.conf.d
   if [[ -d "$APT_CONF_DIR" ]]; then
     cp -a "$APT_CONF_DIR" "$backup_dir/apt.conf.d" 2>/dev/null || true
-    backed_up=$((backed_up + 1))
+    (( backed_up++ )) || true
   fi
 
   if [[ $backed_up -eq 0 ]]; then
@@ -740,12 +633,10 @@ _create_backup() {
 _write_apt_sources() {
   local mirror_url="$1"
 
-  # Ensure keyring exists
   if [[ ! -f "$KEYRING_PATH" ]]; then
     warn "Keyring not found at $KEYRING_PATH — apt may fail signature verification"
   fi
 
-  # Check for existing non-Ubuntu sources in sources.list
   local has_third_party=false
   if [[ -f "$APT_SOURCES_FILE" ]]; then
     if grep -v '^\s*$' "$APT_SOURCES_FILE" 2>/dev/null |
@@ -757,7 +648,6 @@ _write_apt_sources() {
     fi
   fi
 
-  # Write deb822 format
   cat >"$APT_DEB822_FILE" <<SOURCES
 # Power APT Boost — Ubuntu mirror configuration
 # Generated: $(date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -770,7 +660,6 @@ Components: main restricted universe multiverse
 Signed-By: ${KEYRING_PATH}
 SOURCES
 
-  # Only remove sources.list if it doesn't contain third-party repos
   if [[ -f "$APT_SOURCES_FILE" ]]; then
     if [[ "$has_third_party" == true ]]; then
       warn "sources.list contains third-party repositories — preserving it"
@@ -810,7 +699,6 @@ _restore_backup() {
   local backup_path="$1"
 
   if [[ -z "$backup_path" ]]; then
-    # Find the most recent backup
     if [[ -d "$BACKUP_BASE" ]]; then
       backup_path=$(find "$BACKUP_BASE" -mindepth 1 -maxdepth 1 -type d -printf '%T@\t%p\n' 2>/dev/null |
         sort -rn | head -1 | cut -f2)
@@ -818,7 +706,6 @@ _restore_backup() {
   fi
 
   if [[ -z "$backup_path" ]] || [[ ! -d "$backup_path" ]]; then
-    # Try the old backup location
     if [[ -d "/root" ]]; then
       backup_path=$(find /root -maxdepth 1 -name 'apt-backup-*' -type d -printf '%T@\t%p\n' 2>/dev/null |
         sort -rn | head -1 | cut -f2)
@@ -832,7 +719,6 @@ _restore_backup() {
   msg_color "$COLOR_BOLD" "Restoring from: $backup_path"
   echo ""
 
-  # Restore deb822 sources
   if [[ -f "${backup_path}/ubuntu.sources" ]]; then
     cp -a "${backup_path}/ubuntu.sources" "$APT_DEB822_FILE"
     info "Restored ubuntu.sources"
@@ -841,19 +727,16 @@ _restore_backup() {
     info "Restored sources.list.d"
   fi
 
-  # Restore sources.list
   if [[ -f "${backup_path}/sources.list" ]]; then
     cp -a "${backup_path}/sources.list" "$APT_SOURCES_FILE"
     info "Restored sources.list"
   fi
 
-  # Restore apt.conf.d
   if [[ -d "${backup_path}/apt.conf.d" ]]; then
     cp -a "${backup_path}/apt.conf.d/." "$APT_CONF_DIR/"
     info "Restored apt.conf.d"
   fi
 
-  # Clean and update
   msg "Running apt-get update..."
   if apt-get update 2>&1 | tee -a "${LOG_FILE:-/dev/null}"; then
     info "APT sources restored and updated successfully"
@@ -885,20 +768,16 @@ DRYRUN
     return 0
   fi
 
-  # Create backup
   local backup_dir
   backup_dir="$(_create_backup)"
 
-  # Write configuration
   _write_apt_sources "$SELECTED_MIRROR"
   _write_apt_config
 
-  # Clean old package lists
   msg_verbose "Cleaning APT cache..."
   rm -rf /var/lib/apt/lists/*
   apt-get clean 2>/dev/null || true
 
-  # Run apt-get update
   if [[ "$SKIP_UPDATE" == true ]]; then
     msg_color "$COLOR_YELLOW" "Skipped apt-get update (--skip-update)"
     return 0
@@ -920,15 +799,9 @@ DRYRUN
 # ─── Output ───────────────────────────────────────────────────────────────────
 
 _print_json() {
-  local status="success"
-  local action="mirror_selected"
-
-  if [[ "$DRY_RUN" == true ]]; then
-    action="dry_run"
-  fi
-  if [[ "$RESTORE" == true ]]; then
-    action="backup_restored"
-  fi
+  local status="success" action="mirror_selected"
+  [[ "$DRY_RUN" == true ]] && action="dry_run"
+  [[ "$RESTORE" == true ]] && action="backup_restored"
 
   cat <<JSON
 {
@@ -983,12 +856,7 @@ EOF
 }
 
 _print_banner() {
-  if [[ "$QUIET" == true ]]; then
-    return
-  fi
-  if [[ "$JSON_OUTPUT" == true ]]; then
-    return
-  fi
+  [[ "$QUIET" == true || "$JSON_OUTPUT" == true ]] && return
   cat <<EOF
 
 ${COLOR_BOLD}${COLOR_CYAN}  ${APP_NAME} v${APP_VERSION}${COLOR_RESET}
@@ -1053,7 +921,7 @@ ${COLOR_BOLD}EXAMPLES${COLOR_RESET}
 
 ${COLOR_BOLD}WHAT IT DOES${COLOR_RESET}
   1. Detects Ubuntu codename
-  2. Tests multiple Ubuntu mirrors for reachability and speed
+  2. Tests multiple Ubuntu mirrors concurrently for reachability and speed
   3. Selects the fastest working mirror
   4. Backs up current APT configuration
   5. Writes deb822-format APT sources
@@ -1089,9 +957,7 @@ EOF
 # ─── Argument Parsing ────────────────────────────────────────────────────────
 
 _parse_args() {
-  if [[ $# -eq 0 ]]; then
-    return
-  fi
+  [[ $# -eq 0 ]] && return
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1104,9 +970,7 @@ _parse_args() {
       exit "$EXIT_OK"
       ;;
     -m | --mirror)
-      if [[ ! "${2:-}" ]]; then
-        die "Option $1 requires a URL argument" "$EXIT_USAGE"
-      fi
+      [[ ! "${2:-}" ]] && die "Option $1 requires a URL argument" "$EXIT_USAGE"
       FORCE_MIRROR="${2%/}"
       shift 2
       ;;
@@ -1115,9 +979,7 @@ _parse_args() {
       shift
       ;;
     --restore-path)
-      if [[ ! "${2:-}" ]]; then
-        die "Option $1 requires a path argument" "$EXIT_USAGE"
-      fi
+      [[ ! "${2:-}" ]] && die "Option $1 requires a path argument" "$EXIT_USAGE"
       RESTORE_PATH="${2}"
       RESTORE=true
       shift 2
@@ -1154,19 +1016,13 @@ _parse_args() {
       shift
       ;;
     --timeout)
-      if [[ ! "${2:-}" ]]; then
-        die "Option $1 requires a number" "$EXIT_USAGE"
-      fi
-      if [[ ! "$2" =~ ^[0-9]+$ ]]; then
-        die "Option $1 requires a positive integer" "$EXIT_USAGE"
-      fi
+      [[ ! "${2:-}" ]] && die "Option $1 requires a number" "$EXIT_USAGE"
+      [[ ! "$2" =~ ^[0-9]+$ ]] && die "Option $1 requires a positive integer" "$EXIT_USAGE"
       TIMEOUT_TOTAL="$2"
       shift 2
       ;;
     --country)
-      if [[ ! "${2:-}" ]]; then
-        die "Option $1 requires a country code" "$EXIT_USAGE"
-      fi
+      [[ ! "${2:-}" ]] && die "Option $1 requires a country code" "$EXIT_USAGE"
       COUNTRY_FILTER="$2"
       shift 2
       ;;
@@ -1175,9 +1031,7 @@ _parse_args() {
       shift
       ;;
     --log-file)
-      if [[ ! "${2:-}" ]]; then
-        die "Option $1 requires a file path" "$EXIT_USAGE"
-      fi
+      [[ ! "${2:-}" ]] && die "Option $1 requires a file path" "$EXIT_USAGE"
       LOG_FILE="$2"
       LOG_ENABLED=true
       shift 2
@@ -1198,14 +1052,12 @@ main() {
   _setup_colors
   _parse_args "$@"
 
-  # Initialize log file if requested
   if [[ "$LOG_ENABLED" == true ]]; then
     mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
     : >"$LOG_FILE"
     _log_to_file "Session started: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   fi
 
-  # Handle restore
   if [[ "$RESTORE" == true ]]; then
     need_root
     _restore_backup "$RESTORE_PATH"
@@ -1223,14 +1075,19 @@ main() {
   _check_probe_tool
   detect_ubuntu
 
-  # Select or force mirror
   if [[ -n "$FORCE_MIRROR" ]]; then
     msg_color "$COLOR_BOLD" "Testing forced mirror: $FORCE_MIRROR"
     echo ""
-    local total_time
-    if total_time=$(_test_mirror "$FORCE_MIRROR"); then
+    local result_file
+    result_file=$(mktemp "${TMPDIR:-/tmp}/${APP_SLUG}.force.XXXXXX")
+    _test_mirror "$FORCE_MIRROR" "$result_file" "$CODENAME"
+    local rtime rstatus
+    rtime=$(awk '{print $1}' "$result_file")
+    rstatus=$(awk '{print $2}' "$result_file")
+    rm -f "$result_file" 2>/dev/null || true
+    if [[ "$rstatus" == "pass" ]]; then
       SELECTED_MIRROR="$FORCE_MIRROR"
-      SELECTED_TIME="$total_time"
+      SELECTED_TIME="$rtime"
     else
       die "Forced mirror is not reachable: $FORCE_MIRROR"
     fi
@@ -1238,13 +1095,10 @@ main() {
     _select_mirror
   fi
 
-  # Apply or show results
   _apply_changes
   _print_summary
 
-  if [[ "$JSON_OUTPUT" == true ]]; then
-    _print_json
-  fi
+  [[ "$JSON_OUTPUT" == true ]] && _print_json
 }
 
 main "$@"
