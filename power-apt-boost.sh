@@ -34,8 +34,6 @@ readonly BACKUP_BASE="/var/backups/${APP_SLUG}"
 readonly KEYRING_PATH="/usr/share/keyrings/ubuntu-archive-keyring.gpg"
 
 readonly PROBE_TIMEOUT_CONNECT=5
-readonly PROBE_TIMEOUT_DNS=5
-readonly PROBE_TIMEOUT_TLS=10
 readonly PROBE_TIMEOUT_TOTAL=15
 readonly MAX_WORKERS=8
 
@@ -61,6 +59,7 @@ SELECTED_TIME=""
 DRY_RUN=false
 SKIP_UPDATE=false
 FORCE_MIRROR=""
+# shellcheck disable=SC2034  # NO_SPINNER kept for --no-spinner backward compat
 NO_SPINNER=false
 VERBOSE=false
 QUIET=false
@@ -147,17 +146,16 @@ _cleanup() {
   done
   _bg_pids=()
 
-  # Kill any remaining background jobs
-  { kill 0 2>/dev/null || true; } 2>/dev/null
+  # Note: kill 0 is intentionally omitted — it would kill the script itself
 
   # Clean temp dirs
   local d
   for d in "${_tmp_dirs[@]}"; do
-    [[ -d "$d" ]] && rm -rf "$d" 2>/dev/null || true
+    if [[ -d "$d" ]]; then rm -rf "$d" 2>/dev/null || true; fi
   done
   _tmp_dirs=()
 
-  [[ -t 2 ]] && printf "\r\033[K" >&2 2>/dev/null || true
+  if [[ -t 2 ]]; then printf "\r\033[K" >&2 2>/dev/null || true; fi
 
   [[ "$LOG_ENABLED" == true ]] && [[ -n "$LOG_FILE" ]] && \
     _log_to_file "Session ended with exit code $exit_code"
