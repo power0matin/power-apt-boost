@@ -43,7 +43,10 @@ readonly EXIT_USAGE=2
 # ─── Global State ─────────────────────────────────────────────────────────────
 
 # Detect script invocation name for restore command
-_SCRIPT_NAME="${BASH_SOURCE[0]:-}"
+# Temporarily disable nounset: BASH_SOURCE is unset when piped from curl
+set +u
+_SCRIPT_NAME="${BASH_SOURCE[0]}"
+set -u
 if [[ "$_SCRIPT_NAME" == "bash" ]] || [[ "$_SCRIPT_NAME" == "/usr/bin/bash" ]]; then
   _SCRIPT_NAME="power-apt-boost.sh"
 elif [[ "$_SCRIPT_NAME" == *"power-apt-boost"* ]]; then
