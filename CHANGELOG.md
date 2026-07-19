@@ -6,10 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [3.0.0] — 2026-07-19
+
+### Added
+
+- Animated braille spinner during mirror testing
+- Progress bar support for long-running operations
+- Section headers with Unicode box-drawing characters for visual hierarchy
+- Step indicators (`[1/3] Creating backup`) during apply phase
+- `✓` / `✗` visual status indicators for mirror component results
+- Box-drawing tree layout (`┌─ │ └─`) for per-mirror probe output
+- Arrow indicators (`▸`) for selected mirror and response time in summary
+- `COLOR_MAGENTA`, `COLOR_WHITE`, `COLOR_UL` for richer terminal output
+- Parallel mirror testing (up to 8 workers) for 6-8x faster benchmarks
+
+### Changed
+
+- ASCII art banner replaces plain text header
+- Mirror results now show PASS/FAIL with total probe time per mirror
+- Benchmark summary uses aligned key-value pairs with colored values
+- Error messages now include actionable "Fix:" suggestions and examples
+- Help output reorganized with compact exit codes table and section headers
+- `--list` output uses checkmarks/crosses and dimmed column headers
+- Backup warning now notes "non-standard setup" hint
+- Restore error provides manual inspection command
+- JSON output includes `files` object with deb822 and config paths
+- Third-party source warning provides more context
+- Argument validation errors show example usage
+- Unknown/unexpected argument errors display help command hint
+- apt-get update failure message explains the system was restored
+- "No working mirror" error lists causes and suggests `--mirror` flag
+
+### Fixed
+
+- Spinner properly cleaned up on INT/TERM/HUP signals
+- Interrupt handler stops spinner before printing cleanup message
+- Exit trap calls `_stop_spinner` to prevent orphaned processes
+- BASH_SOURCE handling for older bash versions and curl piped execution
+- ShellCheck and shfmt compliance for CI
+- Kill 0 removed from cleanup to avoid killing parent process
+
+## [2.1.0] — 2025-07-12
+
 ### Added
 
 - 17 Iranian Ubuntu mirrors to the default mirror pool for users in Iran
-- Iranian mirror pool section in README with all mirror URLs
 
 ## [2.0.0] — 2025-07-10
 
@@ -89,7 +130,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Added cache cleanup
 - Added branded banner
 
-[Unreleased]: https://github.com/power0matin/power-apt-boost/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/power0matin/power-apt-boost/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/power0matin/power-apt-boost/compare/v2.1.0...v3.0.0
+[2.1.0]: https://github.com/power0matin/power-apt-boost/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/power0matin/power-apt-boost/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/power0matin/power-apt-boost/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/power0matin/power-apt-boost/compare/v1.0.0...v1.1.0

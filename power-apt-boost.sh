@@ -83,19 +83,25 @@ _setup_colors() {
     readonly COLOR_GREEN=$'\033[0;32m'
     readonly COLOR_YELLOW=$'\033[0;33m'
     readonly COLOR_BLUE=$'\033[0;34m'
+    readonly COLOR_MAGENTA=$'\033[0;35m'
     readonly COLOR_CYAN=$'\033[0;36m'
+    readonly COLOR_WHITE=$'\033[0;37m'
     readonly COLOR_BOLD=$'\033[1m'
     readonly COLOR_DIM=$'\033[2m'
     readonly COLOR_RESET=$'\033[0m'
+    readonly COLOR_UL=$'\033[4m'
   else
     readonly COLOR_RED=''
     readonly COLOR_GREEN=''
     readonly COLOR_YELLOW=''
     readonly COLOR_BLUE=''
+    readonly COLOR_MAGENTA=''
     readonly COLOR_CYAN=''
+    readonly COLOR_WHITE=''
     readonly COLOR_BOLD=''
     readonly COLOR_DIM=''
     readonly COLOR_RESET=''
+    readonly COLOR_UL=''
   fi
 }
 
@@ -139,10 +145,77 @@ die() {
   exit "${2:-$EXIT_GENERAL}"
 }
 
+# ─── Spinners & Progress ─────────────────────────────────────────────────────
+
+_spinner_pid=""
+
+_start_spinner() {
+  [[ "$QUIET" == true ]] && return
+  [[ -t 2 ]] || return
+  local msg="${1:-Working}"
+  local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+  (
+    trap "exit 0" INT TERM
+    local i=0
+    while true; do
+      printf "\r  ${COLOR_CYAN}%s${COLOR_RESET} %s" "${frames[$((i % ${#frames[@]}))]}" "$msg" >&2
+      i=$((i + 1))
+      sleep 0.1
+    done
+  ) &
+  _spinner_pid=$!
+}
+
+_stop_spinner() {
+  if [[ -n "$_spinner_pid" ]] && kill -0 "$_spinner_pid" 2>/dev/null; then
+    kill "$_spinner_pid" 2>/dev/null || true
+    wait "$_spinner_pid" 2>/dev/null || true
+    _spinner_pid=""
+    [[ -t 2 ]] && printf "\r\033[K" >&2 2>/dev/null || true
+  fi
+}
+
+_print_progress_bar() {
+  local current="$1" total="$2" width=40
+  local percent=$((current * 100 / total))
+  local filled=$((current * width / total))
+  local empty=$((width - filled))
+
+  local bar=""
+  for ((i = 0; i < filled; i++)); do bar+="█"; done
+  for ((i = 0; i < empty; i++)); do bar+="░"; done
+
+  printf "\r  ${COLOR_DIM}[${COLOR_GREEN}%s${COLOR_DIM}]${COLOR_RESET} %3d%% (${current}/${total})" \
+    "$bar" "$percent" >&2
+}
+
+_print_step() {
+  local step_num="$1" total="$2" msg="$3"
+  printf "\n  ${COLOR_BOLD}${COLOR_BLUE}[%d/%d]${COLOR_RESET} ${COLOR_BOLD}%s${COLOR_RESET}\n" \
+    "$step_num" "$total" "$msg" >&2
+}
+
+_print_divider() {
+  local char="${1:-─}" len="${2:-60}"
+  printf '%*s\n' "$len" '' | tr ' ' "$char" >&2
+}
+
+_print_section_header() {
+  local title="$1"
+  echo "" >&2
+  _print_divider "─" 60 >&2
+  printf "  ${COLOR_BOLD}${COLOR_CYAN}%s${COLOR_RESET}\n" "$title" >&2
+  _print_divider "─" 60 >&2
+  echo "" >&2
+}
+
 # ─── Cleanup & Signals ────────────────────────────────────────────────────────
 
 _cleanup() {
   local exit_code=$?
+
+  # Stop spinner if running
+  _stop_spinner
 
   # Kill all tracked background jobs
   local pid
@@ -170,8 +243,9 @@ _cleanup() {
 }
 
 _handle_interrupt() {
+  _stop_spinner
   msg ""
-  msg_color "$COLOR_YELLOW" "Interrupted by user. Cleaning up..."
+  msg_color "$COLOR_YELLOW" "  Interrupted by user. Cleaning up..."
   exit 130
 }
 
@@ -182,7 +256,10 @@ trap _handle_interrupt INT TERM HUP
 
 need_root() {
   if [[ "$(id -u)" -ne 0 ]]; then
-    die "This script must be run as root. Use: sudo bash ${_SCRIPT_NAME}"
+    echo "" >&2
+    printf "  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}This script must be run as root.${COLOR_RESET}\n\n" >&2
+    printf "  ${COLOR_DIM}Fix:${COLOR_RESET} sudo bash %s\n\n" "${_SCRIPT_NAME}" >&2
+    exit "$EXIT_GENERAL"
   fi
 
   local _hostname_output
@@ -203,24 +280,40 @@ _check_commands() {
   for cmd in apt-get awk date grep mkdir cp id mktemp; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
-  [[ ${#missing[@]} -gt 0 ]] && die "Missing required commands: ${missing[*]}"
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Missing required commands: %s${COLOR_RESET}\n\n" "${missing[*]}" >&2
+    printf "  ${COLOR_DIM}Fix:${COLOR_RESET} These are standard Ubuntu utilities. Your system may be minimal.\n" >&2
+    printf "  Try: ${COLOR_CYAN}apt-get install -y coreutils gawk grep${COLOR_RESET}\n\n" >&2
+    exit "$EXIT_GENERAL"
+  fi
 }
 
 _check_probe_tool() {
   command -v curl >/dev/null 2>&1 && return 0
   command -v wget >/dev/null 2>&1 && return 0
-  die "curl or wget is required for mirror testing. Install one:\n  apt-get install -y curl"
+  printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Neither curl nor wget found.${COLOR_RESET}\n\n" >&2
+  printf "  ${COLOR_DIM}Fix:${COLOR_RESET} Install curl (recommended) or wget:\n" >&2
+  printf "    ${COLOR_CYAN}apt-get install -y curl${COLOR_RESET}\n\n" >&2
+  exit "$EXIT_GENERAL"
 }
 
 # ─── Ubuntu Detection ────────────────────────────────────────────────────────
 
 detect_ubuntu() {
-  [[ -f /etc/os-release ]] || die "/etc/os-release not found. This script requires Ubuntu."
+  [[ -f /etc/os-release ]] || {
+    printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}/etc/os-release not found.${COLOR_RESET}\n\n" >&2
+    printf "  ${COLOR_DIM}This script requires Ubuntu Linux.${COLOR_RESET}\n\n" >&2
+    exit "$EXIT_GENERAL"
+  }
 
   # shellcheck disable=SC1091
   source /etc/os-release
 
-  [[ "${ID:-}" == "ubuntu" ]] || die "This script supports Ubuntu only. Detected: ${PRETTY_NAME:-${ID:-unknown}} (${ID:-unknown})"
+  [[ "${ID:-}" == "ubuntu" ]] || {
+    printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}This script supports Ubuntu only.${COLOR_RESET}\n\n" >&2
+    printf "  ${COLOR_DIM}Detected:${COLOR_RESET} %s (%s)\n\n" "${PRETTY_NAME:-${ID:-unknown}}" "${ID:-unknown}" >&2
+    exit "$EXIT_GENERAL"
+  }
   [[ -n "${VERSION_CODENAME:-}" ]] || die "Could not detect Ubuntu version codename from /etc/os-release."
 
   CODENAME="$VERSION_CODENAME"
@@ -298,12 +391,11 @@ _get_mirrors() {
 list_mirrors() {
   detect_ubuntu
 
-  echo "$APP_NAME v$APP_VERSION — Mirror List"
-  echo ""
-  echo "Ubuntu codename: $CODENAME"
-  echo ""
-  printf '%-50s  %-8s  %s\n' "MIRROR" "STATUS" "DETAIL"
-  printf '%-50s  %-8s  %s\n' "$(printf '%0.s-' {1..50})" "--------" "$(printf '%0.s-' {1..30})"
+  _print_section_header "AVAILABLE MIRRORS"
+
+  printf "  ${COLOR_DIM}%-46s  %-8s  %s${COLOR_RESET}\n" "MIRROR" "STATUS" "DETAIL"
+  printf "  ${COLOR_DIM}%-46s  %-8s  %s${COLOR_RESET}\n" \
+    "$(printf '%0.s─' {1..46})" "────────" "$(printf '%0.s─' {1..30})"
 
   local mirror_url probe_result http_code reason
   while IFS= read -r mirror_url; do
@@ -312,9 +404,10 @@ list_mirrors() {
     reason="${probe_result#* }"
     [[ "$reason" == "$http_code" ]] && reason=""
     if [[ "$http_code" == "200" ]]; then
-      printf '%-50s  %-8s  %s\n' "$mirror_url" "OK" ""
+      printf "  ${COLOR_GREEN}✓${COLOR_RESET} %-44s  ${COLOR_GREEN}OK${COLOR_RESET}     %s\n" "$mirror_url" "" >&2
     else
-      printf '%-50s  %-8s  %s\n' "$mirror_url" "FAIL" "HTTP $http_code${reason:+ — $reason}"
+      printf "  ${COLOR_RED}✗${COLOR_RESET} %-44s  ${COLOR_RED}FAIL${COLOR_RESET}   ${COLOR_DIM}HTTP %s%s${COLOR_RESET}\n" \
+        "$mirror_url" "$http_code" "${reason:+ — $reason}" >&2
     fi
   done < <(_get_mirrors)
 }
@@ -462,31 +555,43 @@ _test_mirror() {
   [[ "$security_reason" == "$security_time" ]] && security_reason=""
 
   # ── Print results to stderr (preserves original format) ──────
-  msg_color "$COLOR_BLUE" "==> $base_url"
+  msg_color "$COLOR_BOLD" "  ┌─ $base_url"
 
-  local fail_msg
+  local fail_msg icon
   if [[ "$main_code" == "200" ]]; then
-    info "[OK] main: HTTP $main_code in ${main_time}s"
+    icon="${COLOR_GREEN}✓${COLOR_RESET}"
+    printf "  │  ${icon} main:     HTTP %s in %ss\n" "$main_code" "$main_time" >&2
   else
+    icon="${COLOR_RED}✗${COLOR_RESET}"
     fail_msg="main: HTTP $main_code in ${main_time}s"
     [[ -n "$main_reason" ]] && fail_msg="${fail_msg} — ${main_reason}"
-    error "[FAIL] $fail_msg"
+    printf "  │  ${icon} ${COLOR_RED}%s${COLOR_RESET}\n" "$fail_msg" >&2
   fi
 
   if [[ "$updates_code" == "200" ]]; then
-    info "[OK] updates: HTTP $updates_code in ${updates_time}s"
+    icon="${COLOR_GREEN}✓${COLOR_RESET}"
+    printf "  │  ${icon} updates:  HTTP %s in %ss\n" "$updates_code" "$updates_time" >&2
   else
+    icon="${COLOR_RED}✗${COLOR_RESET}"
     fail_msg="updates: HTTP $updates_code in ${updates_time}s"
     [[ -n "$updates_reason" ]] && fail_msg="${fail_msg} — ${updates_reason}"
-    error "[FAIL] $fail_msg"
+    printf "  │  ${icon} ${COLOR_RED}%s${COLOR_RESET}\n" "$fail_msg" >&2
   fi
 
   if [[ "$security_code" == "200" ]]; then
-    info "[OK] security: HTTP $security_code in ${security_time}s"
+    icon="${COLOR_GREEN}✓${COLOR_RESET}"
+    printf "  │  ${icon} security: HTTP %s in %ss\n" "$security_code" "$security_time" >&2
   else
+    icon="${COLOR_RED}✗${COLOR_RESET}"
     fail_msg="security: HTTP $security_code in ${security_time}s"
     [[ -n "$security_reason" ]] && fail_msg="${fail_msg} — ${security_reason}"
-    error "[FAIL] $fail_msg"
+    printf "  │  ${icon} ${COLOR_RED}%s${COLOR_RESET}\n" "$fail_msg" >&2
+  fi
+
+  if [[ "$main_code" == "200" ]] && [[ "$updates_code" == "200" ]] && [[ "$security_code" == "200" ]]; then
+    printf "  └─ ${COLOR_GREEN}PASS${COLOR_RESET} total: ${COLOR_BOLD}%ss${COLOR_RESET}\n" "$elapsed" >&2
+  else
+    printf "  └─ ${COLOR_RED}FAIL${COLOR_RESET} total: ${COLOR_BOLD}%ss${COLOR_RESET}\n" "$elapsed" >&2
   fi
 
   # ── Write result to file ─────────────────────────────────────
@@ -502,12 +607,16 @@ _test_mirror() {
 _select_mirror() {
   local mirror_list total_mirrors bench_start bench_end bench_duration
 
-  msg_color "$COLOR_BOLD" "Ubuntu codename: $CODENAME"
+  _print_section_header "MIRROR SELECTION"
+
+  msg "  Ubuntu codename:  ${COLOR_BOLD}${CODENAME}${COLOR_RESET}"
   echo ""
 
   mirror_list=$(_get_mirrors)
   total_mirrors=$(echo "$mirror_list" | wc -l)
-  msg_color "$COLOR_BOLD" "Testing $total_mirrors mirrors (up to $MAX_WORKERS in parallel)..."
+
+  msg "  Mirrors to test:  ${COLOR_BOLD}${total_mirrors}${COLOR_RESET}"
+  msg "  Parallel workers: ${COLOR_BOLD}${MAX_WORKERS}${COLOR_RESET}"
   echo ""
 
   bench_start=$(date +%s)
@@ -520,6 +629,8 @@ _select_mirror() {
   local -a mirrors
   mapfile -t mirrors <<<"$mirror_list"
   local total=${#mirrors[@]}
+
+  _start_spinner "Testing mirrors..."
 
   # ── Worker: test one mirror, write result to file ────────────
   _bench_worker() {
@@ -560,6 +671,8 @@ _select_mirror() {
   bench_end=$(date +%s)
   bench_duration=$((bench_end - bench_start))
 
+  _stop_spinner
+
   # ── Collect results and find best ────────────────────────────
   local best="" best_time="999999" tested=0 passed=0 failed=0
   local i result_line rtime rstatus
@@ -582,21 +695,29 @@ _select_mirror() {
   rm -rf "$bench_tmpdir" 2>/dev/null || true
 
   # ── Print summary (matches original format exactly) ──────────
+  _print_section_header "RESULTS"
+
+  printf "  ${COLOR_DIM}%-24s${COLOR_RESET} ${COLOR_BOLD}%d${COLOR_RESET}\n" "Mirrors tested:" "$tested"
+  printf "  ${COLOR_DIM}%-24s${COLOR_RESET} ${COLOR_GREEN}%d${COLOR_RESET}\n" "Successful:" "$passed"
+  printf "  ${COLOR_DIM}%-24s${COLOR_RESET} ${COLOR_RED}%d${COLOR_RESET}\n" "Failed:" "$failed"
+  printf "  ${COLOR_DIM}%-24s${COLOR_RESET} ${COLOR_BOLD}%ds${COLOR_RESET}\n" "Total duration:" "$bench_duration"
   echo ""
-  msg_color "$COLOR_BOLD" "─── Benchmark Summary ───"
-  msg "  Total mirrors tested:  $tested"
-  msg "  Successful mirrors:    $passed"
-  msg "  Failed mirrors:        $failed"
-  msg "  Total duration:        ${bench_duration}s"
 
   if [[ -n "$best" ]]; then
-    msg_color "$COLOR_GREEN" "  Selected mirror:       $best"
-    msg "  Selection reason:      Fastest response (${best_time}s total)"
+    printf "  ${COLOR_GREEN}▸ Fastest mirror:${COLOR_RESET} ${COLOR_BOLD}%s${COLOR_RESET}\n" "$best"
+    printf "  ${COLOR_GREEN}▸ Response time:${COLOR_RESET}  ${COLOR_BOLD}%ss${COLOR_RESET} (total probe time)\n" "$best_time"
   fi
   echo ""
 
   if [[ -z "$best" ]]; then
-    die "No working mirror found. Check your network connection and try again.\n  Possible causes:\n    - Firewall blocking Ubuntu repository access\n    - DNS resolution failure\n    - Network connectivity issue"
+    printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}No working mirror found.${COLOR_RESET}\n\n" >&2
+    printf "  ${COLOR_DIM}Possible causes:${COLOR_RESET}\n" >&2
+    printf "    - Firewall blocking Ubuntu repository access\n" >&2
+    printf "    - DNS resolution failure\n" >&2
+    printf "    - Network connectivity issue\n\n" >&2
+    printf "  ${COLOR_DIM}Fix:${COLOR_RESET} Check your network connection and try again.\n" >&2
+    printf "  Or specify a mirror directly: ${COLOR_CYAN}sudo bash %s --mirror URL${COLOR_RESET}\n\n" "$_SCRIPT_NAME" >&2
+    exit "$EXIT_GENERAL"
   fi
 
   SELECTED_MIRROR="$best"
@@ -631,8 +752,9 @@ _create_backup() {
 
   if [[ $backed_up -eq 0 ]]; then
     warn "No APT configuration files found to back up"
+    warn "  This may be a fresh installation or a non-standard setup"
   else
-    info "Backup created: $backup_dir"
+    info "Backup created: ${COLOR_BOLD}${backup_dir}${COLOR_RESET}"
   fi
 
   echo "$backup_dir"
@@ -644,7 +766,8 @@ _write_apt_sources() {
   local mirror_url="$1"
 
   if [[ ! -f "$KEYRING_PATH" ]]; then
-    warn "Keyring not found at $KEYRING_PATH — apt may fail signature verification"
+    warn "Keyring not found at ${COLOR_BOLD}${KEYRING_PATH}${COLOR_RESET}"
+    warn "  apt may fail signature verification. This is usually a system config issue."
   fi
 
   local has_third_party=false
@@ -672,8 +795,9 @@ SOURCES
 
   if [[ -f "$APT_SOURCES_FILE" ]]; then
     if [[ "$has_third_party" == true ]]; then
-      warn "sources.list contains third-party repositories — preserving it"
-      warn "Third-party sources may conflict with deb822 config"
+      warn "Third-party repositories detected in sources.list"
+      warn "  Preserving sources.list to avoid breaking third-party repos"
+      warn "  Note: Third-party sources may conflict with deb822 config"
     else
       rm -f "$APT_SOURCES_FILE"
       msg_verbose "Removed legacy sources.list (no third-party repos detected)"
@@ -723,10 +847,17 @@ _restore_backup() {
   fi
 
   if [[ -z "$backup_path" ]] || [[ ! -d "$backup_path" ]]; then
-    die "No backup found to restore.\n  Searched:\n    ${BACKUP_BASE}/\n    /root/apt-backup-*/"
+    printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}No backup found to restore.${COLOR_RESET}\n\n" >&2
+    printf "  ${COLOR_DIM}Searched:${COLOR_RESET}\n" >&2
+    printf "    %s/\n" "$BACKUP_BASE" >&2
+    printf "    /root/apt-backup-*/\n\n" >&2
+    printf "  ${COLOR_DIM}Tip:${COLOR_RESET} Run ${COLOR_CYAN}sudo bash %s${COLOR_RESET} first to create a backup.\n\n" "$_SCRIPT_NAME" >&2
+    exit "$EXIT_GENERAL"
   fi
 
-  msg_color "$COLOR_BOLD" "Restoring from: $backup_path"
+  _print_section_header "RESTORING BACKUP"
+
+  printf "  ${COLOR_GREEN}▸ Source:${COLOR_RESET} %s\n" "$backup_path"
   echo ""
 
   if [[ -f "${backup_path}/ubuntu.sources" ]]; then
@@ -747,62 +878,74 @@ _restore_backup() {
     info "Restored apt.conf.d"
   fi
 
-  msg "Running apt-get update..."
+  echo ""
+  msg_color "$COLOR_BOLD" "Running apt-get update..."
   if apt-get update 2>&1 | tee -a "${LOG_FILE:-/dev/null}"; then
+    echo ""
     info "APT sources restored and updated successfully"
   else
-    die "apt-get update failed after restore. Check your APT sources manually."
+    printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}apt-get update failed after restore.${COLOR_RESET}\n\n" >&2
+    printf "  ${COLOR_DIM}Check your APT sources manually:${COLOR_RESET}\n" >&2
+    printf "    ${COLOR_CYAN}cat /etc/apt/sources.list.d/ubuntu.sources${COLOR_RESET}\n\n" >&2
+    exit "$EXIT_GENERAL"
   fi
 }
 
 # ─── Apply Changes ───────────────────────────────────────────────────────────
 
 _apply_changes() {
-  echo ""
-  msg_color "$COLOR_BOLD" "Selected mirror: $SELECTED_MIRROR"
-  msg_color "$COLOR_CYAN" "Response time: ${SELECTED_TIME}s"
+  _print_section_header "APPLYING CHANGES"
+
+  printf "  ${COLOR_GREEN}▸ Mirror:${COLOR_RESET}   ${COLOR_BOLD}%s${COLOR_RESET}\n" "$SELECTED_MIRROR"
+  printf "  ${COLOR_GREEN}▸ Speed:${COLOR_RESET}    ${COLOR_BOLD}%ss${COLOR_RESET}\n" "$SELECTED_TIME"
   echo ""
 
   if [[ "$DRY_RUN" == true ]]; then
     cat <<DRYRUN
-${COLOR_BOLD}Dry run mode — no changes applied.${COLOR_RESET}
+  ${COLOR_YELLOW}${COLOR_BOLD}DRY RUN MODE${COLOR_RESET} — no changes applied
 
-Files that would be written:
-  ${APT_DEB822_FILE}
-  ${APT_CONF_FILE}
+  ${COLOR_DIM}Files that would be written:${COLOR_RESET}
+    ${COLOR_CYAN}${APT_DEB822_FILE}${COLOR_RESET}
+    ${COLOR_CYAN}${APT_CONF_FILE}${COLOR_RESET}
 
-Selected mirror:
-  ${SELECTED_MIRROR}
+  ${COLOR_DIM}Selected mirror:${COLOR_RESET}
+    ${SELECTED_MIRROR}
 
 DRYRUN
     return 0
   fi
 
+  _print_step 1 3 "Creating backup"
   local backup_dir
   backup_dir="$(_create_backup)"
 
+  _print_step 2 3 "Writing APT configuration"
   _write_apt_sources "$SELECTED_MIRROR"
   _write_apt_config
 
-  msg_verbose "Cleaning APT cache..."
+  msg_verbose "  Cleaning APT cache..."
   rm -rf /var/lib/apt/lists/*
   apt-get clean 2>/dev/null || true
 
   if [[ "$SKIP_UPDATE" == true ]]; then
-    msg_color "$COLOR_YELLOW" "Skipped apt-get update (--skip-update)"
+    echo ""
+    msg_color "$COLOR_YELLOW" "  Skipped apt-get update (--skip-update)"
     return 0
   fi
 
-  echo ""
-  msg_color "$COLOR_BOLD" "Running apt-get update..."
+  _print_step 3 3 "Running apt-get update"
   echo ""
 
   if apt-get update 2>&1; then
+    echo ""
     info "APT update completed successfully"
   else
-    warn "apt-get update failed — restoring backup"
+    echo ""
+    warn "apt-get update failed — reverting to previous configuration"
     _restore_backup "$backup_dir"
-    die "Mirror configuration was reverted due to apt-get update failure."
+    printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Mirror configuration was reverted.${COLOR_RESET}\n\n" >&2
+    printf "  ${COLOR_DIM}The selected mirror did not work. Your system has been restored.${COLOR_RESET}\n\n" >&2
+    exit "$EXIT_GENERAL"
   fi
 }
 
@@ -823,7 +966,11 @@ _print_json() {
   "response_time": "${SELECTED_TIME:-}",
   "dry_run": ${DRY_RUN},
   "skip_update": ${SKIP_UPDATE},
-  "timestamp": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  "timestamp": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
+  "files": {
+    "deb822": "${APT_DEB822_FILE}",
+    "config": "${APT_CONF_FILE}"
+  }
 }
 JSON
 }
@@ -833,12 +980,12 @@ _print_summary() {
     cat <<EOF
 
 ${COLOR_BOLD}════════════════════════════════════════════════════════════${COLOR_RESET}
-${COLOR_CYAN}  Dry run completed${COLOR_RESET}
+  ${COLOR_YELLOW}${COLOR_BOLD}DRY RUN COMPLETED${COLOR_RESET}
 
-  Fastest mirror:  ${SELECTED_MIRROR}
-  Response time:   ${SELECTED_TIME}s
+  Fastest mirror:  ${COLOR_BOLD}${SELECTED_MIRROR}${COLOR_RESET}
+  Response time:   ${COLOR_BOLD}${SELECTED_TIME}s${COLOR_RESET}
 
-  No system changes were made.
+  ${COLOR_DIM}No system changes were made.${COLOR_RESET}
 ${COLOR_BOLD}════════════════════════════════════════════════════════════${COLOR_RESET}
 
 EOF
@@ -848,17 +995,17 @@ EOF
   cat <<EOF
 
 ${COLOR_BOLD}════════════════════════════════════════════════════════════${COLOR_RESET}
-${COLOR_GREEN}  APT mirror optimized successfully${COLOR_RESET}
+  ${COLOR_GREEN}${COLOR_BOLD}SUCCESS — APT mirror optimized${COLOR_RESET}
 
-  Mirror:  ${SELECTED_MIRROR}
-  Time:    ${SELECTED_TIME}s
+  ${COLOR_BOLD}Mirror:${COLOR_RESET}  ${SELECTED_MIRROR}
+  ${COLOR_BOLD}Speed:${COLOR_RESET}   ${SELECTED_TIME}s
 
-  Files modified:
+  ${COLOR_DIM}Config files:${COLOR_RESET}
     ${APT_DEB822_FILE}
     ${APT_CONF_FILE}
 
-  To restore a previous configuration:
-    sudo bash ${_SCRIPT_NAME} --restore
+  ${COLOR_DIM}To undo:${COLOR_RESET}
+    ${COLOR_CYAN}sudo bash ${_SCRIPT_NAME} --restore${COLOR_RESET}
 
 ${COLOR_BOLD}════════════════════════════════════════════════════════════${COLOR_RESET}
 
@@ -867,48 +1014,55 @@ EOF
 
 _print_banner() {
   [[ "$QUIET" == true || "$JSON_OUTPUT" == true ]] && return
-  cat <<EOF
+  cat <<'EOF'
 
-${COLOR_BOLD}${COLOR_CYAN}  ${APP_NAME} v${APP_VERSION}${COLOR_RESET}
-  Fast Ubuntu APT mirror selector and network optimizer
-
-  ${COLOR_DIM}GitHub: ${APP_GITHUB}${COLOR_RESET}
-  ${COLOR_DIM}License: ${APP_LICENSE}${COLOR_RESET}
-
+██████   ██████  ██     ██ ███████ ██████       █████  ██████  ████████     ██████   ██████   ██████  ███████ ████████ 
+██   ██ ██    ██ ██     ██ ██      ██   ██     ██   ██ ██   ██    ██        ██   ██ ██    ██ ██    ██ ██         ██    
+██████  ██    ██ ██  █  ██ █████   ██████      ███████ ██████     ██        ██████  ██    ██ ██    ██ ███████    ██    
+██      ██    ██ ██ ███ ██ ██      ██   ██     ██   ██ ██         ██        ██   ██ ██    ██ ██    ██      ██    ██    
+██       ██████   ███ ███  ███████ ██   ██     ██   ██ ██         ██        ██████   ██████   ██████  ███████    ██    
+                                                                                                                       
+                                                                                                                       
 EOF
+  echo "" >&2
+  printf "  ${COLOR_DIM}Fast Ubuntu APT mirror selector & network optimizer${COLOR_RESET}\n" >&2
+  printf "  ${COLOR_DIM}v${APP_VERSION} · ${APP_LICENSE} · ${APP_AUTHOR}${COLOR_RESET}\n" >&2
+  printf "  ${COLOR_DIM}${APP_GITHUB}${COLOR_RESET}\n" >&2
+  echo "" >&2
 }
 
 _print_help() {
   cat <<EOF
-${APP_NAME} v${APP_VERSION} — Fast Ubuntu APT mirror selector
+${COLOR_BOLD}${COLOR_CYAN}Power APT Boost${COLOR_RESET} v${APP_VERSION}
+Fast Ubuntu APT mirror selector and network optimizer
 
-${COLOR_BOLD}USAGE${COLOR_RESET}
+${COLOR_BOLD}${COLOR_BLUE}USAGE${COLOR_RESET}
   sudo bash ${_SCRIPT_NAME} [OPTIONS]
   curl -fsSL ${APP_GITHUB}/raw/main/power-apt-boost.sh | sudo bash
 
-${COLOR_BOLD}OPTIONS${COLOR_RESET}
-  ${COLOR_GREEN}-h, --help${COLOR_RESET}            Show this help message
-  ${COLOR_GREEN}-v, --version${COLOR_RESET}         Show version information
-  ${COLOR_GREEN}-m, --mirror URL${COLOR_RESET}      Use a specific Ubuntu mirror
-  ${COLOR_GREEN}-r, --restore${COLOR_RESET}         Restore APT config from backup
-  ${COLOR_GREEN}    --restore-path PATH${COLOR_RESET} Restore from a specific backup
-  ${COLOR_GREEN}    --dry-run${COLOR_RESET}          Test mirrors without changing config
-  ${COLOR_GREEN}    --skip-update${COLOR_RESET}      Write config but skip apt-get update
-  ${COLOR_GREEN}    --list${COLOR_RESET}             List available mirrors and test them
-  ${COLOR_GREEN}    --json${COLOR_RESET}             Output results as JSON (for scripting)
-  ${COLOR_GREEN}    --verbose${COLOR_RESET}           Show detailed output
-  ${COLOR_GREEN}    --quiet${COLOR_RESET}             Suppress non-essential output
-  ${COLOR_GREEN}    --no-spinner${COLOR_RESET}        Disable spinner (for CI/CD)
-  ${COLOR_GREEN}    --timeout SECS${COLOR_RESET}      Probe timeout (default: 20)
-  ${COLOR_GREEN}    --country CODE${COLOR_RESET}      Filter mirrors by country code
-  ${COLOR_GREEN}    --ipv6${COLOR_RESET}              Use IPv6 for mirror testing
-  ${COLOR_GREEN}    --log-file PATH${COLOR_RESET}     Write log to file
+${COLOR_BOLD}${COLOR_BLUE}OPTIONS${COLOR_RESET}
+  ${COLOR_GREEN}-h, --help${COLOR_RESET}              Show this help message
+  ${COLOR_GREEN}-v, --version${COLOR_RESET}           Show version information
+  ${COLOR_GREEN}-m, --mirror URL${COLOR_RESET}        Use a specific Ubuntu mirror
+  ${COLOR_GREEN}-r, --restore${COLOR_RESET}           Restore APT config from backup
+  ${COLOR_GREEN}    --restore-path PATH${COLOR_RESET}   Restore from a specific backup
+  ${COLOR_GREEN}    --dry-run${COLOR_RESET}            Test mirrors without changing config
+  ${COLOR_GREEN}    --skip-update${COLOR_RESET}        Write config but skip apt-get update
+  ${COLOR_GREEN}    --list${COLOR_RESET}               List available mirrors and test them
+  ${COLOR_GREEN}    --json${COLOR_RESET}               Output results as JSON (for scripting)
+  ${COLOR_GREEN}    --verbose${COLOR_RESET}             Show detailed output
+  ${COLOR_GREEN}    --quiet${COLOR_RESET}               Suppress non-essential output
+  ${COLOR_GREEN}    --no-spinner${COLOR_RESET}          Disable spinner (for CI/CD)
+  ${COLOR_GREEN}    --timeout SECS${COLOR_RESET}        Probe timeout (default: 20)
+  ${COLOR_GREEN}    --country CODE${COLOR_RESET}        Filter mirrors by country code
+  ${COLOR_GREEN}    --ipv6${COLOR_RESET}                Use IPv6 for mirror testing
+  ${COLOR_GREEN}    --log-file PATH${COLOR_RESET}       Write log to file
 
-${COLOR_BOLD}EXAMPLES${COLOR_RESET}
+${COLOR_BOLD}${COLOR_BLUE}EXAMPLES${COLOR_RESET}
   ${COLOR_DIM}# Auto-select fastest mirror${COLOR_RESET}
   sudo bash ${_SCRIPT_NAME}
 
-  ${COLOR_DIM}# Test without changes${COLOR_RESET}
+  ${COLOR_DIM}# Test without changing system config${COLOR_RESET}
   sudo bash ${_SCRIPT_NAME} --dry-run
 
   ${COLOR_DIM}# Use a specific mirror${COLOR_RESET}
@@ -917,50 +1071,38 @@ ${COLOR_BOLD}EXAMPLES${COLOR_RESET}
   ${COLOR_DIM}# Restore from latest backup${COLOR_RESET}
   sudo bash ${_SCRIPT_NAME} --restore
 
-  ${COLOR_DIM}# Machine-readable output for CI/CD${COLOR_RESET}
+  ${COLOR_DIM}# Machine-readable output for CI/CD pipelines${COLOR_RESET}
   sudo bash ${_SCRIPT_NAME} --json --quiet
 
-  ${COLOR_DIM}# List and test all mirrors${COLOR_RESET}
+  ${COLOR_DIM}# List and test all available mirrors${COLOR_RESET}
   sudo bash ${_SCRIPT_NAME} --list
 
-  ${COLOR_DIM}# Filter by country${COLOR_RESET}
+  ${COLOR_DIM}# Filter mirrors by country${COLOR_RESET}
   sudo bash ${_SCRIPT_NAME} --country us
 
-  ${COLOR_DIM}# Pipe install${COLOR_RESET}
-  curl -fsSL ${APP_GITHUB}/raw/main/power-apt-boost.sh | sudo bash
-
-${COLOR_BOLD}WHAT IT DOES${COLOR_RESET}
-  1. Detects Ubuntu codename
-  2. Tests multiple Ubuntu mirrors concurrently for reachability and speed
+${COLOR_BOLD}${COLOR_BLUE}WHAT IT DOES${COLOR_RESET}
+  1. Detects your Ubuntu version
+  2. Tests multiple mirrors in parallel for speed
   3. Selects the fastest working mirror
   4. Backs up current APT configuration
-  5. Writes deb822-format APT sources
-  6. Configures APT network optimizations (IPv4, retries, timeouts)
+  5. Writes optimized APT sources (deb822 format)
+  6. Configures network optimizations (retries, timeouts)
   7. Cleans stale package lists
   8. Runs apt-get update
 
-${COLOR_BOLD}BACKUPS${COLOR_RESET}
-  Backups are stored in: ${BACKUP_BASE}/
-  Old backups in:       /root/apt-backup-*/
+${COLOR_BOLD}${COLOR_BLUE}BACKUPS${COLOR_RESET}
+  Location:  ${BACKUP_BASE}/
+  Restore:   sudo bash ${_SCRIPT_NAME} --restore
+  Or:        sudo bash ${_SCRIPT_NAME} --restore-path /var/backups/${APP_SLUG}/<timestamp>
 
-  To restore:
-    sudo bash ${_SCRIPT_NAME} --restore
-    sudo bash ${_SCRIPT_NAME} --restore-path /var/backups/${APP_SLUG}/2025-01-01_12-00-00
+${COLOR_BOLD}${COLOR_BLUE}EXIT CODES${COLOR_RESET}
+  ${COLOR_GREEN}0${COLOR_RESET}  Success         ${COLOR_GREEN}4${COLOR_RESET}  Not running as root
+  1  General error      5  Not Ubuntu
+  2  Usage error        6  No working mirror found
+  3  Network error      7  Backup failed
 
-${COLOR_BOLD}EXIT CODES${COLOR_RESET}
-  ${COLOR_GREEN}0${COLOR_RESET}  Success
-  1  General error
-  2  Usage error (invalid arguments)
-  3  Network error
-  4  Not running as root
-  5  Not Ubuntu
-  6  No working mirror found
-  7  Backup failed
-  8  Restore failed
-
-${COLOR_BOLD}AUTHOR${COLOR_RESET}
-  ${APP_AUTHOR}
-  ${APP_GITHUB}
+${COLOR_BOLD}${COLOR_BLUE}AUTHOR${COLOR_RESET}
+  ${APP_AUTHOR} · ${APP_GITHUB}
 EOF
 }
 
@@ -980,7 +1122,7 @@ _parse_args() {
       exit "$EXIT_OK"
       ;;
     -m | --mirror)
-      [[ ! "${2:-}" ]] && die "Option $1 requires a URL argument" "$EXIT_USAGE"
+      [[ ! "${2:-}" ]] && die "Option $1 requires a URL argument.\n  Example: $1 https://mirror.example.com/ubuntu" "$EXIT_USAGE"
       FORCE_MIRROR="${2%/}"
       shift 2
       ;;
@@ -989,7 +1131,7 @@ _parse_args() {
       shift
       ;;
     --restore-path)
-      [[ ! "${2:-}" ]] && die "Option $1 requires a path argument" "$EXIT_USAGE"
+      [[ ! "${2:-}" ]] && die "Option $1 requires a path argument.\n  Example: $1 /var/backups/${APP_SLUG}/2025-01-01_12-00-00" "$EXIT_USAGE"
       RESTORE_PATH="${2}"
       RESTORE=true
       shift 2
@@ -1027,13 +1169,13 @@ _parse_args() {
       shift
       ;;
     --timeout)
-      [[ ! "${2:-}" ]] && die "Option $1 requires a number" "$EXIT_USAGE"
-      [[ ! "$2" =~ ^[0-9]+$ ]] && die "Option $1 requires a positive integer" "$EXIT_USAGE"
+      [[ ! "${2:-}" ]] && die "Option $1 requires a number.\n  Example: $1 30" "$EXIT_USAGE"
+      [[ ! "$2" =~ ^[0-9]+$ ]] && die "Option $1 requires a positive integer.\n  Got: $2" "$EXIT_USAGE"
       TIMEOUT_TOTAL="$2"
       shift 2
       ;;
     --country)
-      [[ ! "${2:-}" ]] && die "Option $1 requires a country code" "$EXIT_USAGE"
+      [[ ! "${2:-}" ]] && die "Option $1 requires a country code.\n  Example: $1 us" "$EXIT_USAGE"
       COUNTRY_FILTER="$2"
       shift 2
       ;;
@@ -1042,16 +1184,20 @@ _parse_args() {
       shift
       ;;
     --log-file)
-      [[ ! "${2:-}" ]] && die "Option $1 requires a file path" "$EXIT_USAGE"
+      [[ ! "${2:-}" ]] && die "Option $1 requires a file path.\n  Example: $1 /var/log/apt-boost.log" "$EXIT_USAGE"
       LOG_FILE="$2"
       LOG_ENABLED=true
       shift 2
       ;;
     -*)
-      die "Unknown option: $1\nRun '$0 --help' for usage information." "$EXIT_USAGE"
+      printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Unknown option: %s${COLOR_RESET}\n\n" "$1" >&2
+      printf "  ${COLOR_DIM}Run '${COLOR_RESET}${COLOR_BOLD}%s --help${COLOR_RESET}${COLOR_DIM}' for usage information.${COLOR_RESET}\n\n" "$0" >&2
+      exit "$EXIT_USAGE"
       ;;
     *)
-      die "Unexpected argument: $1\nRun '$0 --help' for usage information." "$EXIT_USAGE"
+      printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Unexpected argument: %s${COLOR_RESET}\n\n" "$1" >&2
+      printf "  ${COLOR_DIM}Run '${COLOR_RESET}${COLOR_BOLD}%s --help${COLOR_RESET}${COLOR_DIM}' for usage information.${COLOR_RESET}\n\n" "$0" >&2
+      exit "$EXIT_USAGE"
       ;;
     esac
   done
@@ -1087,7 +1233,8 @@ main() {
   detect_ubuntu
 
   if [[ -n "$FORCE_MIRROR" ]]; then
-    msg_color "$COLOR_BOLD" "Testing forced mirror: $FORCE_MIRROR"
+    _print_section_header "TESTING SPECIFIED MIRROR"
+    msg "  Mirror: ${COLOR_BOLD}${FORCE_MIRROR}${COLOR_RESET}"
     echo ""
     local result_file
     result_file=$(mktemp "${TMPDIR:-/tmp}/${APP_SLUG}.force.XXXXXX")
@@ -1100,7 +1247,12 @@ main() {
       SELECTED_MIRROR="$FORCE_MIRROR"
       SELECTED_TIME="$rtime"
     else
-      die "Forced mirror is not reachable: $FORCE_MIRROR"
+      printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Mirror is not reachable:${COLOR_RESET} %s\n\n" "$FORCE_MIRROR" >&2
+      printf "  ${COLOR_DIM}Possible causes:${COLOR_RESET}\n" >&2
+      printf "    - URL is incorrect\n" >&2
+      printf "    - Mirror server is down\n" >&2
+      printf "    - Network connectivity issue\n\n" >&2
+      exit "$EXIT_GENERAL"
     fi
   else
     _select_mirror
