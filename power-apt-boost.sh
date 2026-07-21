@@ -155,8 +155,8 @@ die() {
 _spinner_pid=""
 
 _start_spinner() {
-  [[ "$QUIET" == true ]] && return
-  [[ -t 2 ]] || return
+  if [[ "$QUIET" == true ]]; then return; fi
+  if ! [[ -t 2 ]]; then return; fi
   local msg="${1:-Working}"
   local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
   (
@@ -242,8 +242,9 @@ _cleanup() {
 
   if [[ -t 2 ]]; then printf "\r\033[K" >&2 2>/dev/null || true; fi
 
-  [[ "$LOG_ENABLED" == true ]] && [[ -n "$LOG_FILE" ]] &&
+  if [[ "$LOG_ENABLED" == true ]] && [[ -n "$LOG_FILE" ]]; then
     _log_to_file "Session ended with exit code $exit_code"
+  fi
 
   exit "$exit_code"
 }
@@ -455,7 +456,7 @@ _probe_url_code() {
   local ip_flag="-4"
   local reason="" http_code
 
-  [[ "$USE_IPV6" == true ]] && ip_flag="-6"
+  if [[ "$USE_IPV6" == true ]]; then ip_flag="-6"; fi
 
   if command -v curl >/dev/null 2>&1; then
     local curl_stderr
@@ -624,24 +625,19 @@ _select_mirror() {
   msg "  Mirrors to test:  ${COLOR_BOLD}${total_mirrors}${COLOR_RESET}"
   msg "  Parallel workers: ${COLOR_BOLD}${MAX_WORKERS}${COLOR_RESET}"
   echo ""
-  echo "[DBG] before bench_start" >&2
 
   bench_start=$(date +%s)
-  echo "[DBG] bench_start=$bench_start" >&2
 
   # ── Create temp dir for result files ─────────────────────────
   local bench_tmpdir
   bench_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/${APP_SLUG}.bench.XXXXXX")
-  echo "[DBG] bench_tmpdir=$bench_tmpdir" >&2
 
   # ── Read mirror list into array for indexed access ───────────
   local -a mirrors
   mapfile -t mirrors <<<"$mirror_list"
   local total=${#mirrors[@]}
-  echo "[DBG] total=$total" >&2
 
   _start_spinner "Testing mirrors..."
-  echo "[DBG] spinner done" >&2
 
   # ── Worker: test one mirror, write result to file ────────────
   _bench_worker() {
@@ -964,8 +960,8 @@ DRYRUN
 
 _print_json() {
   local status="success" action="mirror_selected"
-  [[ "$DRY_RUN" == true ]] && action="dry_run"
-  [[ "$RESTORE" == true ]] && action="backup_restored"
+  if [[ "$DRY_RUN" == true ]]; then action="dry_run"; fi
+  if [[ "$RESTORE" == true ]]; then action="backup_restored"; fi
 
   cat <<JSON
 {
@@ -1024,7 +1020,7 @@ EOF
 }
 
 _print_banner() {
-  [[ "$QUIET" == true || "$JSON_OUTPUT" == true ]] && return
+  if [[ "$QUIET" == true || "$JSON_OUTPUT" == true ]]; then return; fi
   cat <<'EOF'
 
 ██████   ██████  ██     ██ ███████ ██████       █████  ██████  ████████     ██████   ██████   ██████  ███████ ████████ 
@@ -1120,7 +1116,7 @@ EOF
 # ─── Argument Parsing ────────────────────────────────────────────────────────
 
 _parse_args() {
-  [[ $# -eq 0 ]] && return
+  if [[ $# -eq 0 ]]; then return; fi
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
