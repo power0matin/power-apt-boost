@@ -255,6 +255,7 @@ _handle_interrupt() {
 
 trap _cleanup EXIT
 trap _handle_interrupt INT TERM HUP
+trap 'echo "ERR at line $LINENO: $BASH_COMMAND (exit $?)" >&2' ERR
 
 # ─── Root Check ───────────────────────────────────────────────────────────────
 
@@ -1231,10 +1232,15 @@ main() {
   fi
 
   _print_banner
+  echo "[DEBUG] after _print_banner" >&2
   need_root
+  echo "[DEBUG] after need_root" >&2
   _check_commands
+  echo "[DEBUG] after _check_commands" >&2
   _check_probe_tool
+  echo "[DEBUG] after _check_probe_tool" >&2
   detect_ubuntu
+  echo "[DEBUG] after detect_ubuntu" >&2
 
   if [[ -n "$FORCE_MIRROR" ]]; then
     _print_section_header "TESTING SPECIFIED MIRROR"
@@ -1259,7 +1265,9 @@ main() {
       exit "$EXIT_GENERAL"
     fi
   else
+    echo "[DEBUG] before _select_mirror" >&2
     _select_mirror
+    echo "[DEBUG] after _select_mirror" >&2
   fi
 
   _apply_changes
