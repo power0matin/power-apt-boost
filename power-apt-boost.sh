@@ -14,7 +14,6 @@
 # Run with --help for full usage information.
 
 set -euo pipefail
-set -E
 IFS=$'\n\t'
 
 # ─── Constants ────────────────────────────────────────────────────────────────
@@ -118,20 +117,22 @@ _log_to_file() {
 }
 
 msg() {
-  [[ "$QUIET" == true ]] && return
+  if [[ "$QUIET" == true ]]; then return; fi
   printf '%b\n' "$*" >&2
   _log_to_file "$*"
 }
 
 msg_color() {
-  [[ "$QUIET" == true ]] && return
+  if [[ "$QUIET" == true ]]; then return; fi
   local color="$1" text="$2"
   printf '%b%b%b\n' "$color" "$text" "$COLOR_RESET" >&2
   _log_to_file "$text"
 }
 
 msg_verbose() {
-  [[ "$VERBOSE" == true ]] && msg "$@"
+  if [[ "$VERBOSE" == true ]]; then
+    msg "$@"
+  fi
 }
 
 info() { msg_color "$COLOR_GREEN" "[OK] $*"; }
@@ -256,7 +257,6 @@ _handle_interrupt() {
 
 trap _cleanup EXIT
 trap _handle_interrupt INT TERM HUP
-trap 'echo "ERR at line $LINENO: $BASH_COMMAND (exit $?)" >&2' ERR
 
 # ─── Root Check ───────────────────────────────────────────────────────────────
 
@@ -306,29 +306,24 @@ _check_probe_tool() {
 # ─── Ubuntu Detection ────────────────────────────────────────────────────────
 
 detect_ubuntu() {
-  echo "[DEBUG] detect_ubuntu: start" >&2
   [[ -f /etc/os-release ]] || {
     printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}/etc/os-release not found.${COLOR_RESET}\n" >&2
     printf '%b\n' "  ${COLOR_DIM}This script requires Ubuntu Linux.${COLOR_RESET}\n" >&2
     exit "$EXIT_GENERAL"
   }
-  echo "[DEBUG] detect_ubuntu: file exists" >&2
 
   # shellcheck disable=SC1091
   source /etc/os-release
-  echo "[DEBUG] detect_ubuntu: sourced os-release, ID=${ID:-unset}" >&2
 
   [[ "${ID:-}" == "ubuntu" ]] || {
     printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}This script supports Ubuntu only.${COLOR_RESET}\n" >&2
     printf '%b\n' "  ${COLOR_DIM}Detected:${COLOR_RESET} ${PRETTY_NAME:-${ID:-unknown}} (${ID:-unknown})\n" >&2
     exit "$EXIT_GENERAL"
   }
-  echo "[DEBUG] detect_ubuntu: ID is ubuntu, VERSION_CODENAME=${VERSION_CODENAME:-unset}" >&2
   [[ -n "${VERSION_CODENAME:-}" ]] || die "Could not detect Ubuntu version codename from /etc/os-release."
 
   CODENAME="$VERSION_CODENAME"
   msg_verbose "Detected Ubuntu ${VERSION_ID:-} (${CODENAME})"
-  echo "[DEBUG] detect_ubuntu: done, CODENAME=${CODENAME}" >&2
 }
 
 # ─── Mirror List ──────────────────────────────────────────────────────────────
@@ -1238,15 +1233,10 @@ main() {
   fi
 
   _print_banner
-  echo "[DEBUG] after _print_banner" >&2
   need_root
-  echo "[DEBUG] after need_root" >&2
   _check_commands
-  echo "[DEBUG] after _check_commands" >&2
   _check_probe_tool
-  echo "[DEBUG] after _check_probe_tool" >&2
   detect_ubuntu
-  echo "[DEBUG] after detect_ubuntu" >&2
 
   if [[ -n "$FORCE_MIRROR" ]]; then
     _print_section_header "TESTING SPECIFIED MIRROR"
@@ -1271,15 +1261,15 @@ main() {
       exit "$EXIT_GENERAL"
     fi
   else
-    echo "[DEBUG] before _select_mirror" >&2
     _select_mirror
-    echo "[DEBUG] after _select_mirror" >&2
   fi
 
   _apply_changes
   _print_summary
 
-  [[ "$JSON_OUTPUT" == true ]] && _print_json
+  if [[ "$JSON_OUTPUT" == true ]]; then
+    _print_json
+  fi
 }
 
 main "$@"
