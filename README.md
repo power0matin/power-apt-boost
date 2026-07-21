@@ -3,7 +3,7 @@
 [![CI](https://github.com/power0matin/power-apt-boost/actions/workflows/ci.yml/badge.svg)](https://github.com/power0matin/power-apt-boost/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen.svg)](https://www.shellcheck.net/)
-[![Version](https://img.shields.io/badge/version-2.0.0-orange.svg)](https://github.com/power0matin/power-apt-boost/releases)
+[![Version](https://img.shields.io/badge/version-2.1.0-orange.svg)](https://github.com/power0matin/power-apt-boost/releases)
 
 Fast Ubuntu APT mirror selector and network optimizer.
 
