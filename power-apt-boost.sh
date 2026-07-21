@@ -95,12 +95,15 @@ _setup_colors() {
     readonly COLOR_GREEN=''
     readonly COLOR_YELLOW=''
     readonly COLOR_BLUE=''
+    # shellcheck disable=SC2034  # Available for user customization
     readonly COLOR_MAGENTA=''
     readonly COLOR_CYAN=''
+    # shellcheck disable=SC2034  # Available for user customization
     readonly COLOR_WHITE=''
     readonly COLOR_BOLD=''
     readonly COLOR_DIM=''
     readonly COLOR_RESET=''
+    # shellcheck disable=SC2034  # Available for user customization
     readonly COLOR_UL=''
   fi
 }
@@ -171,6 +174,7 @@ _stop_spinner() {
     kill "$_spinner_pid" 2>/dev/null || true
     wait "$_spinner_pid" 2>/dev/null || true
     _spinner_pid=""
+    # shellcheck disable=SC2015  # Intentional: A && B || C pattern
     [[ -t 2 ]] && printf "\r\033[K" >&2 2>/dev/null || true
   fi
 }
@@ -257,8 +261,8 @@ trap _handle_interrupt INT TERM HUP
 need_root() {
   if [[ "$(id -u)" -ne 0 ]]; then
     echo "" >&2
-    printf "  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}This script must be run as root.${COLOR_RESET}\n\n" >&2
-    printf "  ${COLOR_DIM}Fix:${COLOR_RESET} sudo bash %s\n\n" "${_SCRIPT_NAME}" >&2
+    printf '%b\n' "  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}This script must be run as root.${COLOR_RESET}\n" >&2
+    printf '%b\n' "  ${COLOR_DIM}Fix:${COLOR_RESET} sudo bash ${_SCRIPT_NAME}\n" >&2
     exit "$EXIT_GENERAL"
   fi
 
@@ -281,9 +285,9 @@ _check_commands() {
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
-    printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Missing required commands: %s${COLOR_RESET}\n\n" "${missing[*]}" >&2
-    printf "  ${COLOR_DIM}Fix:${COLOR_RESET} These are standard Ubuntu utilities. Your system may be minimal.\n" >&2
-    printf "  Try: ${COLOR_CYAN}apt-get install -y coreutils gawk grep${COLOR_RESET}\n\n" >&2
+    printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Missing required commands: ${COLOR_RESET}\n" >&2
+    printf '%b\n' "  ${COLOR_DIM}Fix:${COLOR_RESET} These are standard Ubuntu utilities. Your system may be minimal.\n" >&2
+    printf '%b\n' "  Try: ${COLOR_CYAN}apt-get install -y coreutils gawk grep${COLOR_RESET}\n" >&2
     exit "$EXIT_GENERAL"
   fi
 }
@@ -291,9 +295,9 @@ _check_commands() {
 _check_probe_tool() {
   command -v curl >/dev/null 2>&1 && return 0
   command -v wget >/dev/null 2>&1 && return 0
-  printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Neither curl nor wget found.${COLOR_RESET}\n\n" >&2
-  printf "  ${COLOR_DIM}Fix:${COLOR_RESET} Install curl (recommended) or wget:\n" >&2
-  printf "    ${COLOR_CYAN}apt-get install -y curl${COLOR_RESET}\n\n" >&2
+  printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Neither curl nor wget found.${COLOR_RESET}\n" >&2
+  printf '%b\n' "  ${COLOR_DIM}Fix:${COLOR_RESET} Install curl (recommended) or wget:\n" >&2
+  printf '%b\n' "    ${COLOR_CYAN}apt-get install -y curl${COLOR_RESET}\n" >&2
   exit "$EXIT_GENERAL"
 }
 
@@ -301,8 +305,8 @@ _check_probe_tool() {
 
 detect_ubuntu() {
   [[ -f /etc/os-release ]] || {
-    printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}/etc/os-release not found.${COLOR_RESET}\n\n" >&2
-    printf "  ${COLOR_DIM}This script requires Ubuntu Linux.${COLOR_RESET}\n\n" >&2
+    printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}/etc/os-release not found.${COLOR_RESET}\n" >&2
+    printf '%b\n' "  ${COLOR_DIM}This script requires Ubuntu Linux.${COLOR_RESET}\n" >&2
     exit "$EXIT_GENERAL"
   }
 
@@ -310,8 +314,8 @@ detect_ubuntu() {
   source /etc/os-release
 
   [[ "${ID:-}" == "ubuntu" ]] || {
-    printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}This script supports Ubuntu only.${COLOR_RESET}\n\n" >&2
-    printf "  ${COLOR_DIM}Detected:${COLOR_RESET} %s (%s)\n\n" "${PRETTY_NAME:-${ID:-unknown}}" "${ID:-unknown}" >&2
+    printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}This script supports Ubuntu only.${COLOR_RESET}\n" >&2
+    printf '%b\n' "  ${COLOR_DIM}Detected:${COLOR_RESET} ${PRETTY_NAME:-${ID:-unknown}} (${ID:-unknown})\n" >&2
     exit "$EXIT_GENERAL"
   }
   [[ -n "${VERSION_CODENAME:-}" ]] || die "Could not detect Ubuntu version codename from /etc/os-release."
@@ -710,13 +714,13 @@ _select_mirror() {
   echo ""
 
   if [[ -z "$best" ]]; then
-    printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}No working mirror found.${COLOR_RESET}\n\n" >&2
-    printf "  ${COLOR_DIM}Possible causes:${COLOR_RESET}\n" >&2
-    printf "    - Firewall blocking Ubuntu repository access\n" >&2
-    printf "    - DNS resolution failure\n" >&2
-    printf "    - Network connectivity issue\n\n" >&2
-    printf "  ${COLOR_DIM}Fix:${COLOR_RESET} Check your network connection and try again.\n" >&2
-    printf "  Or specify a mirror directly: ${COLOR_CYAN}sudo bash %s --mirror URL${COLOR_RESET}\n\n" "$_SCRIPT_NAME" >&2
+    printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}No working mirror found.${COLOR_RESET}\n" >&2
+    printf '%b\n' "  ${COLOR_DIM}Possible causes:${COLOR_RESET}\n" >&2
+    printf '%b\n' "    - Firewall blocking Ubuntu repository access\n" >&2
+    printf '%b\n' "    - DNS resolution failure\n" >&2
+    printf '%b\n' "    - Network connectivity issue\n" >&2
+    printf '%b\n' "  ${COLOR_DIM}Fix:${COLOR_RESET} Check your network connection and try again.\n" >&2
+    printf '%b\n' "  Or specify a mirror directly: ${COLOR_CYAN}sudo bash ${_SCRIPT_NAME} --mirror URL${COLOR_RESET}\n" >&2
     exit "$EXIT_GENERAL"
   fi
 
@@ -847,11 +851,11 @@ _restore_backup() {
   fi
 
   if [[ -z "$backup_path" ]] || [[ ! -d "$backup_path" ]]; then
-    printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}No backup found to restore.${COLOR_RESET}\n\n" >&2
-    printf "  ${COLOR_DIM}Searched:${COLOR_RESET}\n" >&2
-    printf "    %s/\n" "$BACKUP_BASE" >&2
-    printf "    /root/apt-backup-*/\n\n" >&2
-    printf "  ${COLOR_DIM}Tip:${COLOR_RESET} Run ${COLOR_CYAN}sudo bash %s${COLOR_RESET} first to create a backup.\n\n" "$_SCRIPT_NAME" >&2
+    printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}No backup found to restore.${COLOR_RESET}\n" >&2
+    printf '%b\n' "  ${COLOR_DIM}Searched:${COLOR_RESET}\n" >&2
+    printf '%b\n' "    ${BACKUP_BASE}/\n" >&2
+    printf '%b\n' "    /root/apt-backup-*/\n" >&2
+    printf '%b\n' "  ${COLOR_DIM}Tip:${COLOR_RESET} Run ${COLOR_CYAN}sudo bash ${_SCRIPT_NAME}${COLOR_RESET} first to create a backup.\n" >&2
     exit "$EXIT_GENERAL"
   fi
 
@@ -884,9 +888,9 @@ _restore_backup() {
     echo ""
     info "APT sources restored and updated successfully"
   else
-    printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}apt-get update failed after restore.${COLOR_RESET}\n\n" >&2
-    printf "  ${COLOR_DIM}Check your APT sources manually:${COLOR_RESET}\n" >&2
-    printf "    ${COLOR_CYAN}cat /etc/apt/sources.list.d/ubuntu.sources${COLOR_RESET}\n\n" >&2
+    printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}apt-get update failed after restore.${COLOR_RESET}\n" >&2
+    printf '%b\n' "  ${COLOR_DIM}Check your APT sources manually:${COLOR_RESET}\n" >&2
+    printf '%b\n' "    ${COLOR_CYAN}cat /etc/apt/sources.list.d/ubuntu.sources${COLOR_RESET}\n" >&2
     exit "$EXIT_GENERAL"
   fi
 }
@@ -943,8 +947,8 @@ DRYRUN
     echo ""
     warn "apt-get update failed — reverting to previous configuration"
     _restore_backup "$backup_dir"
-    printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Mirror configuration was reverted.${COLOR_RESET}\n\n" >&2
-    printf "  ${COLOR_DIM}The selected mirror did not work. Your system has been restored.${COLOR_RESET}\n\n" >&2
+    printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Mirror configuration was reverted.${COLOR_RESET}\n" >&2
+    printf '%b\n' "  ${COLOR_DIM}The selected mirror did not work. Your system has been restored.${COLOR_RESET}\n" >&2
     exit "$EXIT_GENERAL"
   fi
 }
@@ -1025,9 +1029,9 @@ _print_banner() {
                                                                                                                        
 EOF
   echo "" >&2
-  printf "  ${COLOR_DIM}Fast Ubuntu APT mirror selector & network optimizer${COLOR_RESET}\n" >&2
-  printf "  ${COLOR_DIM}v${APP_VERSION} · ${APP_LICENSE} · ${APP_AUTHOR}${COLOR_RESET}\n" >&2
-  printf "  ${COLOR_DIM}${APP_GITHUB}${COLOR_RESET}\n" >&2
+  printf '%b\n' "  ${COLOR_DIM}Fast Ubuntu APT mirror selector & network optimizer${COLOR_RESET}" >&2
+  printf '%b\n' "  ${COLOR_DIM}v${APP_VERSION} · ${APP_LICENSE} · ${APP_AUTHOR}${COLOR_RESET}" >&2
+  printf '%b\n' "  ${COLOR_DIM}${APP_GITHUB}${COLOR_RESET}" >&2
   echo "" >&2
 }
 
@@ -1190,13 +1194,13 @@ _parse_args() {
       shift 2
       ;;
     -*)
-      printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Unknown option: %s${COLOR_RESET}\n\n" "$1" >&2
-      printf "  ${COLOR_DIM}Run '${COLOR_RESET}${COLOR_BOLD}%s --help${COLOR_RESET}${COLOR_DIM}' for usage information.${COLOR_RESET}\n\n" "$0" >&2
+      printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Unknown option: $1${COLOR_RESET}\n" >&2
+      printf '%b\n' "  ${COLOR_DIM}Run '${COLOR_RESET}${COLOR_BOLD}$0 --help${COLOR_RESET}${COLOR_DIM}' for usage information.${COLOR_RESET}\n" >&2
       exit "$EXIT_USAGE"
       ;;
     *)
-      printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Unexpected argument: %s${COLOR_RESET}\n\n" "$1" >&2
-      printf "  ${COLOR_DIM}Run '${COLOR_RESET}${COLOR_BOLD}%s --help${COLOR_RESET}${COLOR_DIM}' for usage information.${COLOR_RESET}\n\n" "$0" >&2
+      printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Unexpected argument: $1${COLOR_RESET}\n" >&2
+      printf '%b\n' "  ${COLOR_DIM}Run '${COLOR_RESET}${COLOR_BOLD}$0 --help${COLOR_RESET}${COLOR_DIM}' for usage information.${COLOR_RESET}\n" >&2
       exit "$EXIT_USAGE"
       ;;
     esac
@@ -1247,11 +1251,11 @@ main() {
       SELECTED_MIRROR="$FORCE_MIRROR"
       SELECTED_TIME="$rtime"
     else
-      printf "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Mirror is not reachable:${COLOR_RESET} %s\n\n" "$FORCE_MIRROR" >&2
-      printf "  ${COLOR_DIM}Possible causes:${COLOR_RESET}\n" >&2
-      printf "    - URL is incorrect\n" >&2
-      printf "    - Mirror server is down\n" >&2
-      printf "    - Network connectivity issue\n\n" >&2
+      printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}Mirror is not reachable:${COLOR_RESET}\n" >&2
+      printf '%b\n' "  ${COLOR_DIM}Possible causes:${COLOR_RESET}\n" >&2
+      printf '%b\n' "    - URL is incorrect\n" >&2
+      printf '%b\n' "    - Mirror server is down\n" >&2
+      printf '%b\n' "    - Network connectivity issue\n" >&2
       exit "$EXIT_GENERAL"
     fi
   else
