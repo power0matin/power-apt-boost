@@ -650,7 +650,7 @@ _select_mirror() {
       _bench_worker "$idx" "${mirrors[$idx]}" "$CODENAME" \
         "${bench_tmpdir}/${idx}.result" &
       _bg_pids+=($!)
-      ((idx++))
+      ((idx++)) || true
     done
 
     # Wait for at least one worker to finish
