@@ -624,19 +624,24 @@ _select_mirror() {
   msg "  Mirrors to test:  ${COLOR_BOLD}${total_mirrors}${COLOR_RESET}"
   msg "  Parallel workers: ${COLOR_BOLD}${MAX_WORKERS}${COLOR_RESET}"
   echo ""
+  echo "[DBG] before bench_start" >&2
 
   bench_start=$(date +%s)
+  echo "[DBG] bench_start=$bench_start" >&2
 
   # ── Create temp dir for result files ─────────────────────────
   local bench_tmpdir
   bench_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/${APP_SLUG}.bench.XXXXXX")
+  echo "[DBG] bench_tmpdir=$bench_tmpdir" >&2
 
   # ── Read mirror list into array for indexed access ───────────
   local -a mirrors
   mapfile -t mirrors <<<"$mirror_list"
   local total=${#mirrors[@]}
+  echo "[DBG] total=$total" >&2
 
   _start_spinner "Testing mirrors..."
+  echo "[DBG] spinner done" >&2
 
   # ── Worker: test one mirror, write result to file ────────────
   _bench_worker() {
