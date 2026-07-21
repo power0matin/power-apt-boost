@@ -14,6 +14,7 @@
 # Run with --help for full usage information.
 
 set -euo pipefail
+set -E
 IFS=$'\n\t'
 
 # ─── Constants ────────────────────────────────────────────────────────────────
@@ -305,24 +306,29 @@ _check_probe_tool() {
 # ─── Ubuntu Detection ────────────────────────────────────────────────────────
 
 detect_ubuntu() {
+  echo "[DEBUG] detect_ubuntu: start" >&2
   [[ -f /etc/os-release ]] || {
     printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}/etc/os-release not found.${COLOR_RESET}\n" >&2
     printf '%b\n' "  ${COLOR_DIM}This script requires Ubuntu Linux.${COLOR_RESET}\n" >&2
     exit "$EXIT_GENERAL"
   }
+  echo "[DEBUG] detect_ubuntu: file exists" >&2
 
   # shellcheck disable=SC1091
   source /etc/os-release
+  echo "[DEBUG] detect_ubuntu: sourced os-release, ID=${ID:-unset}" >&2
 
   [[ "${ID:-}" == "ubuntu" ]] || {
     printf '%b\n' "\n  ${COLOR_RED}${COLOR_BOLD}ERROR:${COLOR_RESET} ${COLOR_RED}This script supports Ubuntu only.${COLOR_RESET}\n" >&2
     printf '%b\n' "  ${COLOR_DIM}Detected:${COLOR_RESET} ${PRETTY_NAME:-${ID:-unknown}} (${ID:-unknown})\n" >&2
     exit "$EXIT_GENERAL"
   }
+  echo "[DEBUG] detect_ubuntu: ID is ubuntu, VERSION_CODENAME=${VERSION_CODENAME:-unset}" >&2
   [[ -n "${VERSION_CODENAME:-}" ]] || die "Could not detect Ubuntu version codename from /etc/os-release."
 
   CODENAME="$VERSION_CODENAME"
   msg_verbose "Detected Ubuntu ${VERSION_ID:-} (${CODENAME})"
+  echo "[DEBUG] detect_ubuntu: done, CODENAME=${CODENAME}" >&2
 }
 
 # ─── Mirror List ──────────────────────────────────────────────────────────────
